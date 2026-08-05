@@ -1,0 +1,42 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CadTranslation.Contracts", "CadTranslation.Contracts\CadTranslation.Contracts.csproj", "{38D1496F-A938-4E9E-AC8F-825220FD7BE1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CadTranslation.Core", "CadTranslation.Core\CadTranslation.Core.csproj", "{E19E2A11-0ADF-49B5-8147-B4E305B47910}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CadTranslation.AutoCAD2025", "CadTranslation.AutoCAD2025\CadTranslation.AutoCAD2025.csproj", "{07D416DC-84CB-492E-9560-F23FE1D40277}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CadTranslation.Core.Tests", "CadTranslation.Core.Tests\CadTranslation.Core.Tests.csproj", "{9B43CBE5-6836-450F-84D9-750A1498C825}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CadTranslation.TestHost", "CadTranslation.TestHost\CadTranslation.TestHost.csproj", "{A910820B-E954-4179-B8F0-97AD0FC71C52}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{38D1496F-A938-4E9E-AC8F-825220FD7BE1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{38D1496F-A938-4E9E-AC8F-825220FD7BE1}.Debug|x64.Build.0 = Debug|Any CPU
+		{38D1496F-A938-4E9E-AC8F-825220FD7BE1}.Release|x64.ActiveCfg = Release|Any CPU
+		{38D1496F-A938-4E9E-AC8F-825220FD7BE1}.Release|x64.Build.0 = Release|Any CPU
+		{E19E2A11-0ADF-49B5-8147-B4E305B47910}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E19E2A11-0ADF-49B5-8147-B4E305B47910}.Debug|x64.Build.0 = Debug|Any CPU
+		{E19E2A11-0ADF-49B5-8147-B4E305B47910}.Release|x64.ActiveCfg = Release|Any CPU
+		{E19E2A11-0ADF-49B5-8147-B4E305B47910}.Release|x64.Build.0 = Release|Any CPU
+		{07D416DC-84CB-492E-9560-F23FE1D40277}.Debug|x64.ActiveCfg = Debug|x64
+		{07D416DC-84CB-492E-9560-F23FE1D40277}.Debug|x64.Build.0 = Debug|x64
+		{07D416DC-84CB-492E-9560-F23FE1D40277}.Release|x64.ActiveCfg = Release|x64
+		{07D416DC-84CB-492E-9560-F23FE1D40277}.Release|x64.Build.0 = Release|x64
+		{9B43CBE5-6836-450F-84D9-750A1498C825}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{9B43CBE5-6836-450F-84D9-750A1498C825}.Debug|x64.Build.0 = Debug|Any CPU
+		{9B43CBE5-6836-450F-84D9-750A1498C825}.Release|x64.ActiveCfg = Release|Any CPU
+		{9B43CBE5-6836-450F-84D9-750A1498C825}.Release|x64.Build.0 = Release|Any CPU
+		{A910820B-E954-4179-B8F0-97AD0FC71C52}.Debug|x64.ActiveCfg = Debug|x64
+		{A910820B-E954-4179-B8F0-97AD0FC71C52}.Debug|x64.Build.0 = Debug|x64
+		{A910820B-E954-4179-B8F0-97AD0FC71C52}.Release|x64.ActiveCfg = Release|x64
+		{A910820B-E954-4179-B8F0-97AD0FC71C52}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal

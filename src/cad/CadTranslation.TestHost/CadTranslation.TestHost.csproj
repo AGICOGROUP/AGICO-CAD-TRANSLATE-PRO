@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <AutoCAD2025Dir Condition="'$(AutoCAD2025Dir)'==''">C:\Program Files\Autodesk\AutoCAD 2025</AutoCAD2025Dir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CadTranslation.Contracts\CadTranslation.Contracts.csproj" />
+    <ProjectReference Include="..\CadTranslation.Core\CadTranslation.Core.csproj" />
+    <Reference Include="AcCoreMgd" HintPath="$(AutoCAD2025Dir)\accoremgd.dll">
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcDbMgd" HintPath="$(AutoCAD2025Dir)\acdbmgd.dll">
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="AcMgd" HintPath="$(AutoCAD2025Dir)\acmgd.dll">
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target
+    Name="RequireAutoCAD2025"
+    BeforeTargets="ResolveReferences"
+    Condition="!Exists('$(AutoCAD2025Dir)\accoremgd.dll')"
+  >
+    <Error Text="AutoCAD 2025 managed assemblies were not found at $(AutoCAD2025Dir)." />
+  </Target>
+</Project>

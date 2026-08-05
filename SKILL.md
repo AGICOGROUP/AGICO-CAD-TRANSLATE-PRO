@@ -1,6 +1,6 @@
 ---
 name: translate-cad-files
-description: Translate Chinese text in AutoCAD DWG or DXF drawings with professional terminology, complete coverage, preserved tables and diagrams, dense-note layout, and source-relative fidelity.
+description: Use when translating Chinese text to English in AutoCAD 2025 DWG drawings, or DXF drawings that can be manually verified, including technical notes, labels, title blocks, tables, diagrams, and bilingual cleanup.
 ---
 
 # Translate CAD Files
@@ -18,8 +18,8 @@ Never open or print the complete manifest, translation output, `layout-audit.jso
 3. Run `scripts/run.ps1 prepare-translations --job <job-dir> --max-source-chars 6000`. Read one `exchange/translation-worklist/part-*.jsonl` at a time; non-Chinese records stay out of context.
 4. Translate each batch to a matching file in `exchange/translated-batches/` with only `recordId` and `translatedText`. For cement-process drawings, use `references/cement-industry-glossary.md` only for current terms. Preserve protected markers exactly and in order. Put no commentary in JSONL.
 5. Run `scripts/run.ps1 assemble-translations --job <job-dir> --translated <job-dir>/exchange/translated-batches`. It restores fixed fields, fills non-Chinese records locally, validates coverage and markers, and writes `exchange/translations.output.jsonl`.
-6. Run `scripts/run.ps1 import --job <job-dir> --translations <job-dir>/exchange/translations.output.jsonl`. Import performs the pre-import language gate internally; do not run `check-translations` separately. It imports once, composes eligible dense prose, re-exports once, and publishes only after `artifacts/postcomposition-language-check.json` has zero CJK in `plainText` and `rawText`. Each terminal result ends that Core Console stage; never wait for or close AutoCAD manually.
-7. Run `scripts/run.ps1 audit-summary --job <job-dir>`. Require zero residue and segment overflow. Treat any printable-frame overflow as a hard failure. If `requiresVisualReview` is true, follow `references/visual-audit.md` only for changed, composed, or high-risk areas.
+6. Run `scripts/run.ps1 import --job <job-dir> --translations <job-dir>/exchange/translations.output.jsonl`. Import performs the pre-import language gate internally; do not run `check-translations` separately. It imports once, composes eligible dense prose, re-exports once, and publishes only after `artifacts/postcomposition-language-check.json` has zero Han, CJK/fullwidth punctuation, or CJK compatibility residue in `plainText` and `rawText`. Each terminal result ends that Core Console stage; never wait for or close AutoCAD manually. The default import/compose timeout is 1800 seconds; set `--timeout-seconds` only when drawing size requires a different bound.
+7. Run `scripts/run.ps1 audit-summary --job <job-dir>`. A nonzero exit is a hard failure for language residue, missing audit coverage, or segment overflow. Treat any printable-frame overflow as a hard failure. If `requiresVisualReview` is true, follow `references/visual-audit.md` only for changed, composed, or high-risk areas.
 8. Run `scripts/run.ps1 status --job <job-dir>`; deliver only `results/candidate.dwg` or `.dxf`.
 
 Do not retry export or import automatically.
@@ -36,4 +36,4 @@ If one object contains equivalent English, remove its Chinese and preserve the E
 
 Preserve source height and the title/subtitle/body/annotation hierarchy. Repeated equivalent diagram labels keep their shared source height. Tables, diagrams, dimensions, title blocks, unchanged English, and neighboring columns are hard keep-outs. The innermost printable sheet frame, not outer block extents, is a hard boundary. Reject the candidate if any changed text crosses it. For fixed/table text: keep source height; move only inside its source-derived slot; then compress width; reduce height only if still impossible. Padding must never exclude source text. Do not go below 55% source height or globally beautify/realign.
 
-Read `references/exchange-format.md` only for batch, marker, or contract failures. DXF is supported but sample verification is pending. MLeader, native Table, XREF, and proxy objects require manual review.
+Read `references/exchange-format.md` only for batch, marker, or contract failures. This release is Chinese-to-English only. DWG is verified; DXF execution is available but sample verification is pending. MLeader, native Table, XREF, and proxy objects require manual review. Auditable .NET source is bundled under `src/cad`; runtime DLL hashes must match the corresponding release build.

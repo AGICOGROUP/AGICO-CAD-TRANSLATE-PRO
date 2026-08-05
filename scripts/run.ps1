@@ -6,10 +6,8 @@ param(
 
 $scriptPath = Join-Path $PSScriptRoot 'cad_translate.py'
 $candidates = @()
+$candidates += $env:CAD_TRANSLATE_PYTHON
 if ($env:CODEX_BUNDLED_PYTHON) { $candidates += $env:CODEX_BUNDLED_PYTHON }
-if ($env:USERPROFILE) {
-    $candidates += Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-}
 
 foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf) -and $candidate -notmatch 'WindowsApps') {
@@ -30,4 +28,4 @@ if ($python -and $python.Source -notmatch 'WindowsApps') {
     exit $LASTEXITCODE
 }
 
-throw 'No real CPython found. Install CPython or set CODEX_BUNDLED_PYTHON; WindowsApps aliases are intentionally refused.'
+throw 'No real CPython found. Install CPython or set CAD_TRANSLATE_PYTHON; WindowsApps aliases are intentionally refused.'

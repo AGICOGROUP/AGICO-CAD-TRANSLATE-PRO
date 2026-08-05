@@ -8,6 +8,7 @@ from unittest import mock
 import subprocess
 from contextlib import redirect_stdout
 import io
+import types
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "cad_translate.py"
@@ -68,6 +69,23 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(["zh-1", "zh-2"], [record["recordId"] for record in work_records])
             self.assertEqual({"recordId", "sourceText"}, set(work_records[0]))
             self.assertNotIn("English only", "\n".join(part.read_text(encoding="utf-8") for part in parts))
+
+    def test_translation_worklist_includes_cjk_punctuation_and_extension_b(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            self.write_manifest(
+                job,
+                [
+                    self.manifest_record("punctuation", "：（）、《》。"),
+                    self.manifest_record("extension-b", "\U00020000"),
+                    self.manifest_record("ascii", "English: (OK)."),
+                ],
+            )
+
+            summary = cad_translate.prepare_translation_worklist(job)
+
+            self.assertEqual(2, summary["translationRecordCount"])
+            self.assertEqual(1, summary["passthroughRecordCount"])
 
     def test_assemble_translations_fills_passthrough_and_restores_contract(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -160,6 +178,8 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(30, summary["layout"]["missingBlockInstanceCount"])
             self.assertEqual(20, len(summary["layout"]["missingBlockInstanceExamples"]))
             self.assertEqual(1, summary["logicalFlow"]["segmentOverflowCount"])
+            self.assertEqual("failed", summary["status"])
+            self.assertIn("segment_overflow", summary["gate"]["errorCodes"])
             self.assertIn("visualReviewTargets", summary)
             self.assertTrue((artifacts / "visual-review-targets.json").is_file())
 
@@ -178,6 +198,9 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertIn("Treat any printable-frame overflow as a hard failure", skill_text)
         self.assertIn("Reject the candidate if any changed text crosses it", skill_text)
         self.assertLess(len(skill_text.split()), 700)
+        self.assertNotIn("complete coverage", skill_text)
+        self.assertIn("DWG", skill_text)
+        self.assertIn("DXF", skill_text)
 
         visual_audit = (
             Path(__file__).resolve().parents[1] / "references" / "visual-audit.md"
@@ -213,17 +236,33 @@ class CadTranslateDryTests(unittest.TestCase):
 
     def test_packaged_plugin_is_present_and_matches_release_build_when_available(self):
         skill_root = Path(__file__).resolve().parents[1]
-        repository_root = skill_root.parents[1]
+        source_root = skill_root / "src" / "cad"
+        self.assertTrue((source_root / "CadTranslation.AutoCAD2025" / "Importer.cs").is_file())
+        self.assertTrue((source_root / "CadTranslation.Core" / "TranslationValidator.cs").is_file())
         release_root = (
-            repository_root
-            / "src"
-            / "cad"
+            source_root
             / "CadTranslation.AutoCAD2025"
             / "bin"
             / "x64"
             / "Release"
             / "net8.0-windows"
         )
+        if not release_root.is_dir():
+            completed = subprocess.run(
+                [
+                    "dotnet",
+                    "build",
+                    str(source_root / "CadTranslation.sln"),
+                    "-c",
+                    "Release",
+                    "-p:Platform=x64",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertTrue(release_root.is_dir())
         packaged_root = skill_root / "assets" / "plugin"
 
         for name in (
@@ -234,10 +273,9 @@ class CadTranslateDryTests(unittest.TestCase):
             with self.subTest(name=name):
                 packaged_path = packaged_root / name
                 self.assertGreater(packaged_path.stat().st_size, 1024)
-                if release_root.is_dir():
-                    built = hashlib.sha256((release_root / name).read_bytes()).hexdigest()
-                    packaged = hashlib.sha256(packaged_path.read_bytes()).hexdigest()
-                    self.assertEqual(built, packaged)
+                built = hashlib.sha256((release_root / name).read_bytes()).hexdigest()
+                packaged = hashlib.sha256(packaged_path.read_bytes()).hexdigest()
+                self.assertEqual(built, packaged)
 
     @staticmethod
     def write_translation_fixture(root, source_text, translated_text):
@@ -309,6 +347,27 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(["raw"], report["rawTextChineseResidualRecordIds"])
             self.assertTrue(report_path.is_file())
 
+    def test_language_gate_rejects_fullwidth_punctuation_and_extension_b(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.jsonl"
+            manifest.write_text(
+                "\n".join(
+                    (
+                        json.dumps({"recordId": "punct", "plainText": "English：OK", "rawText": "English"}, ensure_ascii=False),
+                        json.dumps({"recordId": "ext-b", "plainText": "English", "rawText": "\U00020000"}, ensure_ascii=False),
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = cad_translate.check_exported_candidate_language(manifest, root / "report.json")
+
+            self.assertEqual("failed", report["status"])
+            self.assertEqual(["punct"], report["plainTextChineseResidualRecordIds"])
+            self.assertEqual(["ext-b"], report["rawTextChineseResidualRecordIds"])
+
     def test_check_translations_passes_english_and_ignores_protected_markers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -357,6 +416,9 @@ class CadTranslateDryTests(unittest.TestCase):
     def test_decode_accepts_utf16_coreconsole_output(self):
         self.assertEqual(cad_translate.decode_output("完成".encode("utf-16")), "完成")
 
+    def test_decode_accepts_gb18030_coreconsole_output(self):
+        self.assertEqual(cad_translate.decode_output("完成".encode("gb18030")), "完成")
+
     def test_timeout_terminates_process_tree_then_kills_parent_if_needed(self):
         class Process:
             pid = 4321
@@ -390,7 +452,7 @@ class CadTranslateDryTests(unittest.TestCase):
             working = root / "job" / "working.dwg"; working.write_bytes(b"x")
             config = config_dir / "export-job.json"; config.write_text("{}", encoding="utf-8")
             with mock.patch.object(cad_translate.subprocess, "Popen", return_value=Process()), mock.patch.object(cad_translate.subprocess, "run"), mock.patch.object(cad_translate.time, "monotonic", side_effect=[0, 121]):
-                code = cad_translate.run_once("export", config, working, root)
+                code = cad_translate.run_once("export", config, working, root, timeout_seconds=120)
             self.assertEqual(code, -9)
             self.assertIn("超时", (root / "job" / "artifacts" / "export-timeout.log").read_text(encoding="utf-8"))
             self.assertIn("_.NETLOAD", (config_dir / "export.scr").read_text(encoding="utf-8"))
@@ -491,6 +553,55 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(0, code)
             self.assertFalse((root / "job" / "artifacts" / "import-timeout.log").exists())
 
+    def test_run_once_accepts_configurable_stage_timeout(self):
+        observed = []
+
+        class Process:
+            pid = 103
+            returncode = 0
+            def communicate(self, timeout=None):
+                observed.append(timeout)
+                return b"completed", b""
+            def poll(self): return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_dir = root / "job" / "config"; config_dir.mkdir(parents=True)
+            (root / "job" / "artifacts").mkdir()
+            working = root / "job" / "working.dwg"; working.write_bytes(b"x")
+            config = config_dir / "import-job.json"; config.write_text("{}", encoding="utf-8")
+            with mock.patch.object(cad_translate.subprocess, "Popen", return_value=Process()) as popen:
+                code = cad_translate.run_once("import", config, working, root, timeout_seconds=1800)
+
+        self.assertEqual(0, code)
+        self.assertLessEqual(observed[0], 0.5)
+        self.assertNotIn("/language", popen.call_args.args[0])
+
+    def test_profile_prefers_current_autocad_profile(self):
+        class Key:
+            def __init__(self, path): self.path = path
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+
+        def query_value(key, name):
+            if name == "CurVer":
+                return "ACAD-8101:409", 1
+            if name == "" and key.path.endswith("\\Profiles"):
+                return "CurrentProfile", 1
+            raise OSError("value not found")
+
+        fake = types.SimpleNamespace(
+            HKEY_CURRENT_USER=object(),
+            OpenKey=lambda _root, path: Key(path),
+            QueryValueEx=query_value,
+            EnumKey=lambda _key, _index: "FirstProfile",
+        )
+        with mock.patch.dict("sys.modules", {"winreg": fake}):
+            report = cad_translate.profile()
+
+        self.assertEqual("CurrentProfile", report["name"])
+        self.assertEqual("current", report["selection"])
+
     def test_doctor_is_read_only_and_reports_missing_components(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -516,6 +627,13 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertTrue((job / "config" / "export-job.json").is_file())
             self.assertTrue((job / "artifacts").is_dir())
             self.assertTrue((job / "exchange").is_dir())
+
+    def test_export_rejects_unsupported_language_direction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"original")
+            with self.assertRaisesRegex(ValueError, "Chinese-to-English"):
+                cad_translate.prepare_export_job(source, root / "job", "fr", "en")
 
     def test_export_preflight_blocks_before_creating_job(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -561,6 +679,9 @@ class CadTranslateDryTests(unittest.TestCase):
         command = f"$tokens=$null;$errors=$null;[Management.Automation.Language.Parser]::ParseFile('{escaped}',[ref]$tokens,[ref]$errors)|Out-Null;if($errors.Count){{exit 1}}"
         completed = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, check=False)
         self.assertEqual(completed.returncode, 0, completed.stderr)
+        wrapper_text = wrapper.read_text(encoding="utf-8")
+        self.assertIn("CAD_TRANSLATE_PYTHON", wrapper_text)
+        self.assertNotIn("codex-primary-runtime", wrapper_text)
 
     def test_export_writes_seal_only_after_success_envelope_and_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -661,6 +782,41 @@ class CadTranslateDryTests(unittest.TestCase):
                     cad_translate.run_import(job, translations, root)
             runner.assert_not_called()
 
+    def test_failed_import_quarantines_partial_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"source")
+            job = root / "job"
+            config = cad_translate.prepare_export_job(source, job, "zh-CN", "en")
+            manifest = Path(config["manifestPath"])
+            manifest.write_text(
+                json.dumps({"recordId": "a", "inputHash": "h", "plainText": "source", "protectedTokens": []}) + "\n",
+                encoding="utf-8",
+            )
+            Path(config["resultPath"]).write_text(json.dumps({"status": "succeeded"}), encoding="utf-8")
+            cad_translate.write_export_seal(job, config)
+            translations = job / "exchange" / "translations.output.jsonl"
+            translations.write_text(
+                json.dumps({"schemaVersion": "1.0", "recordId": "a", "inputHash": "h", "translatedText": "target", "reviewStatus": "approved", "reason": "ok"}) + "\n",
+                encoding="utf-8",
+            )
+
+            def failed_import(_operation, config_path, _working, _autocad_root):
+                stage = json.loads(config_path.read_text(encoding="utf-8"))
+                Path(stage["outputPath"]).write_bytes(b"partial")
+                return 1
+
+            with mock.patch.object(cad_translate, "require_ready"), mock.patch.object(
+                cad_translate, "run_once", side_effect=failed_import
+            ):
+                self.assertEqual(1, cad_translate.run_import(job, translations, root))
+
+            self.assertFalse((job / "results" / "candidate.dwg").exists())
+            self.assertEqual(
+                b"partial",
+                (job / "artifacts" / "failed-import-candidate.dwg").read_bytes(),
+            )
+
     def test_successful_import_runs_guarded_composition_and_publishes_composed_candidate(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -700,6 +856,8 @@ class CadTranslateDryTests(unittest.TestCase):
                         json.dumps({"composedObjects": 0, "rows": []}), encoding="utf-8"
                     )
                 else:
+                    self.assertEqual("zh-CN", stage["sourceLanguage"])
+                    self.assertEqual("en", stage["targetLanguage"])
                     Path(stage["manifestPath"]).write_text(
                         json.dumps({"recordId": "final", "plainText": "English", "rawText": "English"}) + "\n",
                         encoding="utf-8",
@@ -721,6 +879,45 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual("passed", final_check["status"])
             self.assertEqual(0, final_check["plainTextChineseResidualCount"])
             self.assertEqual(0, final_check["rawTextChineseResidualCount"])
+
+    def test_import_rejects_composed_segment_overflow_before_publish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"source")
+            job = root / "job"
+            config = cad_translate.prepare_export_job(source, job, "zh-CN", "en")
+            manifest = Path(config["manifestPath"])
+            manifest.write_text(
+                json.dumps({"recordId": "a", "inputHash": "h", "plainText": "source", "protectedTokens": []}) + "\n",
+                encoding="utf-8",
+            )
+            Path(config["resultPath"]).write_text(json.dumps({"status": "succeeded"}), encoding="utf-8")
+            cad_translate.write_export_seal(job, config)
+            translations = job / "exchange" / "translations.output.jsonl"
+            translations.write_text(
+                json.dumps({"schemaVersion": "1.0", "recordId": "a", "inputHash": "h", "translatedText": "target", "reviewStatus": "approved", "reason": "ok"}) + "\n",
+                encoding="utf-8",
+            )
+
+            def stages(operation, config_path, working, autocad_root):
+                stage = json.loads(config_path.read_text(encoding="utf-8"))
+                if operation == "import":
+                    Path(stage["outputPath"]).write_bytes(b"imported")
+                    (job / "artifacts" / "layout-audit.json").write_text(json.dumps({"texts": []}), encoding="utf-8")
+                elif operation == "compose":
+                    Path(stage["outputPath"]).write_bytes(b"overflowed")
+                    (job / "artifacts" / "logical-flow-report.json").write_text(
+                        json.dumps({"composedObjects": 1, "rows": [{"actualHeight": 11, "availableHeight": 10}]}),
+                        encoding="utf-8",
+                    )
+                Path(stage["resultPath"]).write_text(json.dumps({"status": "succeeded"}), encoding="utf-8")
+                return 0
+
+            with mock.patch.object(cad_translate, "require_ready"), mock.patch.object(cad_translate, "run_once", side_effect=stages):
+                with self.assertRaisesRegex(RuntimeError, "segment overflow"):
+                    cad_translate.run_import(job, translations, root)
+
+            self.assertFalse((job / "results" / "candidate.dwg").exists())
 
 
 if __name__ == "__main__":

@@ -2,15 +2,23 @@
 """Guarded AutoCAD 2025 DWG/DXF translation runner (stdlib only)."""
 from __future__ import annotations
 
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, time
+import argparse, hashlib, json, locale, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
 AUTOCAD_2025 = Path(r"C:\Program Files\Autodesk\AutoCAD 2025")
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 PLUGIN_FILES = ("CadTranslation.AutoCAD2025.dll", "CadTranslation.Core.dll", "CadTranslation.Contracts.dll")
-CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+TARGET_LANGUAGE_RESIDUE = re.compile(
+    r"[\u2e80-\u2fff\u3000-\u303f\u31c0-\u31ef\u3400-\u4dbf"
+    r"\u4e00-\u9fff\uf900-\ufaff\ufe10-\ufe1f\ufe30-\ufe4f"
+    r"\uff01-\uff60\uffe0-\uffee\U00020000-\U0002fa1f"
+    r"\U00030000-\U000323af]"
+)
 DIAGNOSTIC_EXAMPLE_LIMIT = 20
+SUPPORTED_SOURCE_LANGUAGES = {"zh", "zh-cn", "zh-hans"}
+SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb"}
+DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800}
 
 def absolute(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
@@ -31,9 +39,20 @@ def profile() -> dict[str, object]:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Autodesk\AutoCAD\R25.0") as release:
             product, _ = winreg.QueryValueEx(release, "CurVer")
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"Software\Autodesk\AutoCAD\R25.0\{product}\Profiles") as profiles:
-            name = winreg.EnumKey(profiles, 0)
-        report.update(initialized=bool(name), name=name, detail="read-only profile preflight")
+        product_path = rf"Software\Autodesk\AutoCAD\R25.0\{product}"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, product_path + r"\Profiles") as profiles:
+            try:
+                name, _ = winreg.QueryValueEx(profiles, "")
+                selection = "current"
+            except OSError:
+                name = winreg.EnumKey(profiles, 0)
+                selection = "fallback-first"
+        report.update(
+            initialized=bool(name),
+            name=name,
+            selection=selection,
+            detail="read-only profile preflight",
+        )
     except (OSError, ImportError) as error:
         report["detail"] = f"No initialized profile: {error}"
     return report
@@ -56,9 +75,19 @@ def assert_source(source: Path) -> None:
     if not source.is_file() or source.suffix.lower() not in (".dwg", ".dxf"):
         raise ValueError("Source must be an existing .dwg or .dxf file.")
 
+def validate_language_direction(source_language: str, target_language: str) -> None:
+    source = source_language.strip().lower()
+    target = target_language.strip().lower()
+    if source not in SUPPORTED_SOURCE_LANGUAGES or target not in SUPPORTED_TARGET_LANGUAGES:
+        raise ValueError(
+            "This release supports Chinese-to-English only "
+            "(source: zh/zh-CN/zh-Hans; target: en/en-US/en-GB)."
+        )
+
 def prepare_export_job(source: Path, job: Path, source_language: str, target_language: str) -> dict[str, object]:
     source, job = absolute(source), absolute(job)
     assert_source(source)
+    validate_language_direction(source_language, target_language)
     if job.exists():
         raise FileExistsError(f"Refusing to reuse job directory: {job}")
     for name in ("working", "config", "exchange", "artifacts", "results"):
@@ -98,7 +127,7 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000) -> dic
     work_records = [
         {"recordId": str(record["recordId"]), "sourceText": str(record.get("plainText", ""))}
         for record in manifest
-        if CJK.search(str(record.get("plainText", "")))
+        if TARGET_LANGUAGE_RESIDUE.search(str(record.get("plainText", "")))
     ]
     batches: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
@@ -162,7 +191,7 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
     expected = {
         str(record["recordId"])
         for record in manifest
-        if CJK.search(str(record.get("plainText", "")))
+        if TARGET_LANGUAGE_RESIDUE.search(str(record.get("plainText", "")))
     }
     missing = sorted(expected - set(received))
     extra = sorted(set(received) - expected)
@@ -268,9 +297,9 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
         record_id = str(translation["recordId"])
         source_text = str(manifest_by_id[record_id].get("plainText", ""))
         translated_text = str(translation["translatedText"])
-        if CJK.search(source_text):
+        if TARGET_LANGUAGE_RESIDUE.search(source_text):
             translated_source_records += 1
-        if CJK.search(translated_text):
+        if TARGET_LANGUAGE_RESIDUE.search(translated_text):
             residual_ids.append(record_id)
         if (source_text and not translated_text.strip()) or "\ufffd" in translated_text:
             invalid_ids.append(record_id)
@@ -300,12 +329,12 @@ def check_exported_candidate_language(manifest_path: Path, report_path: Path) ->
     plain_residuals = [
         str(record.get("recordId", ""))
         for record in records
-        if CJK.search(str(record.get("plainText", "")))
+        if TARGET_LANGUAGE_RESIDUE.search(str(record.get("plainText", "")))
     ]
     raw_residuals = [
         str(record.get("recordId", ""))
         for record in records
-        if CJK.search(str(record.get("rawText", "")))
+        if TARGET_LANGUAGE_RESIDUE.search(str(record.get("rawText", "")))
     ]
     report: dict[str, object] = {
         "schemaVersion": "1.0",
@@ -361,6 +390,18 @@ def _build_visual_review_targets(layout: dict[str, object], logical: dict[str, o
             add(row, "composed", direct_bounds=True)
     return list(grouped.values())
 
+def _segment_overflow_count(logical: dict[str, object]) -> int:
+    rows = logical.get("rows", []) if isinstance(logical.get("rows", []), list) else []
+    return sum(
+        1
+        for row in rows
+        if isinstance(row, dict)
+        and not str(row.get("kind", "")).endswith("-preserved")
+        and isinstance(row.get("actualHeight"), (int, float))
+        and isinstance(row.get("availableHeight"), (int, float))
+        and float(row["actualHeight"]) > float(row["availableHeight"]) + 1e-6
+    )
+
 def summarize_audit(job: Path) -> dict[str, object]:
     """Reduce large machine reports to bounded model-facing counts."""
     job = absolute(job)
@@ -376,15 +417,7 @@ def summarize_audit(job: Path) -> dict[str, object]:
     language = json.loads(language_path.read_text(encoding="utf-8")) if language_path.is_file() else {}
     missing_blocks = [str(value) for value in layout.get("missingBlockInstancePaths", [])]
     rows = logical.get("rows", []) if isinstance(logical.get("rows", []), list) else []
-    overflow_count = sum(
-        1
-        for row in rows
-        if isinstance(row, dict)
-        and not str(row.get("kind", "")).endswith("-preserved")
-        and isinstance(row.get("actualHeight"), (int, float))
-        and isinstance(row.get("availableHeight"), (int, float))
-        and float(row["actualHeight"]) > float(row["availableHeight"]) + 1e-6
-    )
+    overflow_count = _segment_overflow_count(logical)
     risk_counts = layout.get("riskCounts", {}) if isinstance(layout.get("riskCounts", {}), dict) else {}
     visual_targets = _build_visual_review_targets(layout, logical)
     visual_targets_path = artifacts / "visual-review-targets.json"
@@ -439,6 +472,17 @@ def summarize_audit(job: Path) -> dict[str, object]:
         or summary["layout"]["riskCounts"]["high"]
         or summary["layout"]["manualReviewCount"]
     )
+    gate_errors: list[str] = []
+    if not layout_path.is_file(): gate_errors.append("layout_audit_missing")
+    if not logical_path.is_file(): gate_errors.append("logical_flow_report_missing")
+    if not language_path.is_file(): gate_errors.append("language_report_missing")
+    if summary["layout"]["missingBlockInstanceCount"]: gate_errors.append("layout_instance_audit_incomplete")
+    if overflow_count: gate_errors.append("segment_overflow")
+    if summary["language"]["status"] != "passed" or summary["language"]["chineseResidualCount"]:
+        gate_errors.append("target_language_residue")
+    if summary["language"]["invalidTranslationCount"]: gate_errors.append("invalid_translation")
+    summary["status"] = "passed" if not gate_errors else "failed"
+    summary["gate"] = {"passed": not gate_errors, "errorCodes": gate_errors}
     summary_path = artifacts / "audit-summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -487,6 +531,11 @@ def decode_output(value: bytes | None) -> str:
         return ""
     if value.startswith((b"\xff\xfe", b"\xfe\xff")) or value.count(b"\x00") * 4 > len(value):
         return value.decode("utf-16", errors="replace")
+    for encoding in ("utf-8", locale.getpreferredencoding(False), "gb18030"):
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
     return value.decode("utf-8", errors="replace")
 
 def terminate_process_tree(process: object) -> None:
@@ -500,17 +549,26 @@ def terminate_process_tree(process: object) -> None:
         process.kill()
         process.wait(timeout=5)
 
-def run_once(operation: str, config_path: Path, working: Path, autocad_root: Path) -> int:
+def run_once(
+    operation: str,
+    config_path: Path,
+    working: Path,
+    autocad_root: Path,
+    timeout_seconds: int | None = None,
+) -> int:
     plugin = (PLUGIN_DIR / PLUGIN_FILES[0]).resolve(strict=True)
     if any(ch in str(plugin) + str(working) for ch in ('\r', '\n', '"')): raise ValueError("Unsafe AutoCAD path")
     profile_name = str(profile()["name"])
     script = config_path.parent / f"{operation}.scr"
     script.write_text(f'_.NETLOAD\n"{plugin}"\nCADTRANS_{operation.upper()}\n_.QUIT\n', encoding="utf-8", newline="\n")
-    command = [str(absolute(autocad_root) / "accoreconsole.exe"), "/product", "ACAD", "/language", "zh-CN", "/p", profile_name, "/nologo", "/nohardware", "/i", str(working), "/s", str(script)]
+    command = [str(absolute(autocad_root) / "accoreconsole.exe"), "/product", "ACAD", "/p", profile_name, "/nologo", "/nohardware", "/i", str(working), "/s", str(script)]
     environment = os.environ.copy(); environment["CADTRANS_JOB_CONFIG"] = str(config_path); environment["CADTRANS_DIAGNOSTIC_DIRECTORY"] = str(config_path.parent.parent / "artifacts")
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     process = subprocess.Popen(command, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creationflags)
-    timeout_seconds = 300 if operation in {"import", "compose"} else 120
+    if timeout_seconds is None:
+        timeout_seconds = DEFAULT_STAGE_TIMEOUT_SECONDS.get(operation, 300)
+    if timeout_seconds < 1:
+        raise ValueError("timeout_seconds must be positive")
     try:
         job_config = json.loads(config_path.read_text(encoding="utf-8"))
         result_path = Path(str(job_config.get("resultPath", "")))
@@ -560,17 +618,52 @@ def run_once(operation: str, config_path: Path, working: Path, autocad_root: Pat
     (config_path.parent.parent / "artifacts" / f"{operation}-console.log").write_text(decode_output(stdout) + decode_output(stderr), encoding="utf-8")
     return returncode
 
-def run_export(source: Path, job: Path, source_language: str, target_language: str, autocad_root: Path) -> int:
+def _run_stage(
+    operation: str,
+    config_path: Path,
+    working: Path,
+    autocad_root: Path,
+    timeout_seconds: int | None,
+) -> int:
+    if timeout_seconds is None:
+        return run_once(operation, config_path, working, autocad_root)
+    return run_once(
+        operation,
+        config_path,
+        working,
+        autocad_root,
+        timeout_seconds=timeout_seconds,
+    )
+
+def run_export(
+    source: Path,
+    job: Path,
+    source_language: str,
+    target_language: str,
+    autocad_root: Path,
+    timeout_seconds: int | None = None,
+) -> int:
     source = absolute(source)
     assert_source(source)
     require_ready(source, autocad_root)
     config = prepare_export_job(source, job, source_language, target_language)
-    result = run_once("export", absolute(job) / "config" / "export-job.json", Path(str(config["workingPath"])), autocad_root)
+    result = _run_stage(
+        "export",
+        absolute(job) / "config" / "export-job.json",
+        Path(str(config["workingPath"])),
+        autocad_root,
+        timeout_seconds,
+    )
     if result != 0: return result
     write_export_seal(job, config)
     return result
 
-def run_import(job: Path, translations: Path, autocad_root: Path) -> int:
+def run_import(
+    job: Path,
+    translations: Path,
+    autocad_root: Path,
+    timeout_seconds: int | None = None,
+) -> int:
     job, translations = absolute(job), absolute(translations)
     config_path = job / "config" / "export-job.json"; config = json.loads(config_path.read_text(encoding="utf-8"))
     source, working, manifest = Path(config["sourcePath"]), Path(config["workingPath"]), Path(config["manifestPath"])
@@ -589,8 +682,13 @@ def run_import(job: Path, translations: Path, autocad_root: Path) -> int:
     config.update(operation="import", translationPath=str(owned_translations), resultPath=str(job / "artifacts" / "import-result.json"))
     config_path = job / "config" / "import-job.json"; config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     require_ready(source, autocad_root)
-    result = run_once("import", config_path, working, autocad_root)
+    result = _run_stage("import", config_path, working, autocad_root, timeout_seconds)
     if result != 0:
+        failed_candidate = Path(str(config["outputPath"]))
+        results_root = (job / "results").resolve()
+        if failed_candidate.is_file() and failed_candidate.resolve().is_relative_to(results_root):
+            quarantine = job / "artifacts" / f"failed-import-candidate{failed_candidate.suffix.lower()}"
+            os.replace(failed_candidate, quarantine)
         return result
     _require_succeeded_result(Path(str(config["resultPath"])), "import")
 
@@ -618,7 +716,7 @@ def run_import(job: Path, translations: Path, autocad_root: Path) -> int:
     )
     compose_path = job / "config" / "compose-job.json"
     compose_path.write_text(json.dumps(compose_config, ensure_ascii=False, indent=2), encoding="utf-8")
-    result = run_once("compose", compose_path, compose_working, autocad_root)
+    result = _run_stage("compose", compose_path, compose_working, autocad_root, timeout_seconds)
     if result != 0:
         return result
     _require_succeeded_result(Path(str(compose_config["resultPath"])), "compose")
@@ -627,13 +725,20 @@ def run_import(job: Path, translations: Path, autocad_root: Path) -> int:
     logical_report = job / "artifacts" / "logical-flow-report.json"
     if not logical_report.is_file():
         raise RuntimeError("Composition succeeded without logical-flow-report.json.")
+    logical = json.loads(logical_report.read_text(encoding="utf-8"))
+    overflow_count = _segment_overflow_count(logical)
+    if overflow_count:
+        raise RuntimeError(
+            f"composition segment overflow gate failed: segment_overflow_count={overflow_count}"
+        )
     final_audit_job = job / "artifacts" / "postcomposition-audit-job"
     final_audit_result = run_export(
         composed_output,
         final_audit_job,
-        str(config.get("targetLanguage", "en")),
+        str(config.get("sourceLanguage", "zh-CN")),
         str(config.get("targetLanguage", "en")),
         autocad_root,
+        timeout_seconds,
     )
     if final_audit_result != 0:
         return final_audit_result
@@ -677,23 +782,25 @@ def _bounded_cli_output(report: dict[str, object]) -> dict[str, object]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--autocad-root", type=Path, default=AUTOCAD_2025); sub = parser.add_subparsers(dest="command", required=True)
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
-    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en")
+    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int)
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
-    imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True)
+    imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True); imported.add_argument("--timeout-seconds", type=int)
     checked = sub.add_parser("check-translations"); checked.add_argument("--job", type=Path, required=True); checked.add_argument("--translations", type=Path, required=True); checked.add_argument("--report", type=Path)
     audited = sub.add_parser("audit-summary"); audited.add_argument("--job", type=Path, required=True)
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
-    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root); output = {"job": str(absolute(args.job)), "exitCode": code}
+    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0
-    elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root); output = {"job": str(absolute(args.job)), "exitCode": code}
+    elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "check-translations":
         job = absolute(args.job)
         output = _bounded_cli_output(check_translations(job / "exchange" / "manifest.input.jsonl", absolute(args.translations), args.report))
         code = 0 if output["status"] == "passed" else 1
-    elif args.command == "audit-summary": output, code = summarize_audit(args.job), 0
+    elif args.command == "audit-summary":
+        output = summarize_audit(args.job)
+        code = 0 if output["status"] == "passed" else 1
     else: output, code = status(args.job), 0
     print(json.dumps(output, ensure_ascii=False, indent=2)); return code
 

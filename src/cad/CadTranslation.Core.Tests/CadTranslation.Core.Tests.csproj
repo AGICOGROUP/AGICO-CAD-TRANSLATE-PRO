@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CadTranslation.Contracts\CadTranslation.Contracts.csproj" />
+    <ProjectReference Include="..\CadTranslation.Core\CadTranslation.Core.csproj" />
+  </ItemGroup>
+</Project>

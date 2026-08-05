@@ -1,4 +1,4 @@
 interface:
   display_name: "Translate CAD Files"
-  short_description: "Translate DWG/DXF with bounded-context layout QA"
-  default_prompt: "Use $translate-cad-files to translate this Chinese DWG or DXF through bounded work batches, preserve drawing layout, and return a verified candidate without loading full CAD reports into context."
+  short_description: "Translate Chinese DWG and reviewable DXF to English"
+  default_prompt: "Use $translate-cad-files to translate this Chinese AutoCAD 2025 DWG to English, or process this DXF with manual verification, while preserving supported drawing structure and using bounded work batches."
