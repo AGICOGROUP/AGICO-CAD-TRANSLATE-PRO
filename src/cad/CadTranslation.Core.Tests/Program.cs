@@ -94,6 +94,9 @@ var tests = new (string Name, Action Run)[]
     ,("layout_v2_keeps_table_text_inside_parent_cell", Tests.LayoutV2KeepsTableTextInsideParentCell)
     ,("layout_v2_runs_one_fit_and_one_audit", Tests.LayoutV2RunsOneFitAndOneAudit)
     ,("layout_v2_narrative_fragments_share_one_panel", Tests.LayoutV2NarrativeFragmentsShareOnePanel)
+    ,("layout_v2_classifies_large_unframed_mtext_as_narrative", Tests.LayoutV2ClassifiesLargeUnframedMTextAsNarrative)
+    ,("topology_capture_excludes_erased_entities", Tests.TopologyCaptureExcludesErasedEntities)
+    ,("topology_capture_excludes_regenerated_dimension_text", Tests.TopologyCaptureExcludesRegeneratedDimensionText)
     ,("fixed_label_slot_uses_free_space_until_neighbor_midpoint", Tests.FixedLabelSlotUsesFreeSpaceUntilNeighborMidpoint)
     ,("isolated_fixed_label_slot_stays_close_to_source_visual_width", Tests.IsolatedFixedLabelSlotStaysCloseToSourceVisualWidth)
     ,("isolated_fixed_label_slot_allows_source_height_english_label", Tests.IsolatedFixedLabelSlotAllowsSourceHeightEnglishLabel)
@@ -2730,6 +2733,39 @@ internal static class Tests
         LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
 
         AssertEx.Equal(decisions[0].AllowedBounds, decisions[1].AllowedBounds);
+    }
+
+    public static void LayoutV2ClassifiesLargeUnframedMTextAsNarrative()
+    {
+        AssertEx.Equal(
+            LayoutV2Kind.Narrative,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.Unassigned,
+                "AcDbMText",
+                "Notes: Lubricate per manual before startup and inspect all guards before operation.",
+                new Rect2(10, 10, 80, 30),
+                2));
+        AssertEx.Equal(
+            LayoutV2Kind.FixedLabel,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.Unassigned,
+                "AcDbMText",
+                "Drive",
+                new Rect2(10, 10, 20, 14),
+                2));
+    }
+
+    public static void TopologyCaptureExcludesErasedEntities()
+    {
+        AssertEx.False(TopologyCapturePolicy.ShouldCapture(isErased: true));
+        AssertEx.True(TopologyCapturePolicy.ShouldCapture(isErased: false));
+    }
+
+    public static void TopologyCaptureExcludesRegeneratedDimensionText()
+    {
+        AssertEx.False(TopologyCapturePolicy.ShouldCaptureText("*D483", hasLayoutInput: false));
+        AssertEx.True(TopologyCapturePolicy.ShouldCaptureText("*D483", hasLayoutInput: true));
+        AssertEx.True(TopologyCapturePolicy.ShouldCaptureText("*U12", hasLayoutInput: false));
     }
 
     public static void HighGeometryContactIsSoftWhenTextOverlapGateIsClear()

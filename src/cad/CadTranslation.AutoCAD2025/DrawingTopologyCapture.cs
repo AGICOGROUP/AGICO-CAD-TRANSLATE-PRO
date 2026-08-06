@@ -81,7 +81,15 @@ internal static class DrawingTopologyCapture
         foreach (ObjectId entityId in block)
         {
             DBObject value = transaction.GetObject(entityId, OpenMode.ForRead, false);
-            if (value is not Entity entity)
+            if (!TopologyCapturePolicy.ShouldCapture(value.IsErased) ||
+                value is not Entity entity)
+            {
+                continue;
+            }
+
+            LayoutWriteInput? input = inputById.GetValueOrDefault(entityId);
+            if (entity is DBText or MText &&
+                !TopologyCapturePolicy.ShouldCaptureText(block.Name, input is not null))
             {
                 continue;
             }
@@ -91,7 +99,7 @@ internal static class DrawingTopologyCapture
             {
                 blockFrameCandidates.Add((entityId, entity.Layer, blockBounds));
             }
-            if (TryCaptureText(entity, inputById.GetValueOrDefault(entityId), out var text))
+            if (TryCaptureText(entity, input, out var text))
             {
                 textCandidates.Add(text);
                 continue;

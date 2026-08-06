@@ -228,6 +228,13 @@ class CadTranslateDryTests(unittest.TestCase):
             / "CadTranslation.AutoCAD2025"
             / "Importer.cs"
         ).read_text(encoding="utf-8")
+        note_layout = (
+            skill_root
+            / "src"
+            / "cad"
+            / "CadTranslation.AutoCAD2025"
+            / "NoteColumnLayout.cs"
+        ).read_text(encoding="utf-8")
 
         self.assertIn("one source-derived allowed region", skill_text)
         self.assertIn("one fit and one audit", skill_text)
@@ -235,6 +242,10 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertLess(len(skill_text.split()), 450)
         self.assertIn("LayoutOptimizerV2.Optimize", importer)
         self.assertNotIn("while (layoutAudit.PassIndex", importer)
+        self.assertIn(
+            "topology[0].Region is null && allowedOverride is null",
+            note_layout,
+        )
 
     def test_cement_glossary_is_packaged_for_authoritative_term_selection(self):
         skill_root = Path(__file__).resolve().parents[1]

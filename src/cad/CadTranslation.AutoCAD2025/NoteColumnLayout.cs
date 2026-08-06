@@ -43,7 +43,9 @@ internal static class NoteColumnLayout
         double minimumHeightScale = LayoutFitPolicy.EmergencyMinimumHeightScale,
         Rect2? allowedOverride = null)
     {
-        if (targets.Count == 0 || topology.Count != targets.Count || topology[0].Region is null)
+        if (targets.Count == 0 ||
+            topology.Count != targets.Count ||
+            (topology[0].Region is null && allowedOverride is null))
         {
             return [];
         }
@@ -61,9 +63,10 @@ internal static class NoteColumnLayout
 
             if (value is DBText dbText)
             {
+                Rect2 textRegion = allowedOverride ?? textTopology.Region!.Bounds;
                 double width = Math.Max(
                     dbText.Height,
-                    textTopology.Region!.Bounds.Right - textTopology.Source.Bounds.Left);
+                    textRegion.Right - textTopology.Source.Bounds.Left);
                 MText replacement = TextAnchorMapper.Replace(
                     database,
                     transaction,

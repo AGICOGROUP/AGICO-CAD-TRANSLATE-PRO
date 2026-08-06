@@ -135,6 +135,9 @@ internal static class LayoutOptimizerV2
                 .Where(region => region.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.TitleBlock)
                 .Where(region => text.Region is null || !string.Equals(region.Id, text.Region.Id, StringComparison.Ordinal))
                 .Select(region => region.Bounds)
+                .Concat(definition.Texts
+                    .Where(other => !string.Equals(GroupId(other), GroupId(text), StringComparison.Ordinal))
+                    .Select(other => other.Source.Bounds))
                 .Concat(definition.ProtectedGeometry.Select(item => item.Bounds))
                 .Distinct()
                 .ToArray()
@@ -168,12 +171,12 @@ internal static class LayoutOptimizerV2
         return new HashSet<string>(ids, StringComparer.Ordinal);
     }
 
-    private static LayoutV2Kind Kind(CadLayoutText text) => text.Region?.Kind switch
-    {
-        LayoutRegionKind.TableCell => LayoutV2Kind.TableCell,
-        LayoutRegionKind.NoteColumn => LayoutV2Kind.Narrative,
-        _ => LayoutV2Kind.FixedLabel
-    };
+    private static LayoutV2Kind Kind(CadLayoutText text) => LayoutV2Classifier.Select(
+        text.Region?.Kind,
+        text.ObjectType,
+        text.CandidateText,
+        text.Source.Bounds,
+        text.Source.OriginalTextHeight);
 
     private static string GroupId(CadLayoutText text) =>
         $"{text.DefinitionName}\u001f{text.Region?.Id ?? text.EntityHandle}";

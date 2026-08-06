@@ -24,6 +24,37 @@ public sealed record LayoutV2Decision(
     bool ManualReview,
     string Reason);
 
+public static class LayoutV2Classifier
+{
+    public static LayoutV2Kind Select(
+        LayoutRegionKind? regionKind,
+        string objectType,
+        string candidateText,
+        Rect2 sourceBounds,
+        double originalTextHeight)
+    {
+        if (regionKind == LayoutRegionKind.TableCell)
+        {
+            return LayoutV2Kind.TableCell;
+        }
+        if (regionKind == LayoutRegionKind.NoteColumn)
+        {
+            return LayoutV2Kind.Narrative;
+        }
+        if (regionKind is LayoutRegionKind.TitleBlock or LayoutRegionKind.ClosedFrame ||
+            !string.Equals(objectType, "AcDbMText", StringComparison.Ordinal) ||
+            candidateText.Length < 80)
+        {
+            return LayoutV2Kind.FixedLabel;
+        }
+
+        return candidateText.Contains("Note", StringComparison.OrdinalIgnoreCase) ||
+               sourceBounds.Width >= originalTextHeight * 10
+            ? LayoutV2Kind.Narrative
+            : LayoutV2Kind.FixedLabel;
+    }
+}
+
 public static class LayoutV2Planner
 {
     public static LayoutV2Decision[] Plan(
