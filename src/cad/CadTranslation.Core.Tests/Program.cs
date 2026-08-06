@@ -88,6 +88,10 @@ var tests = new (string Name, Action Run)[]
     ,("narrative_row_boxes_fallback_when_source_centers_are_outside", Tests.NarrativeRowBoxesFallbackWhenSourceCentersAreOutside)
     ,("narrative_inline_fragments_wrap_as_one_visual_row", Tests.NarrativeInlineFragmentsWrapAsOneVisualRow)
     ,("source_neighbor_slots_are_mutually_exclusive_on_same_row", Tests.SourceNeighborSlotsAreMutuallyExclusiveOnSameRow)
+    ,("layout_v2_assigns_every_changed_record_once", Tests.LayoutV2AssignsEveryChangedRecordOnce)
+    ,("layout_v2_clamps_narrative_before_right_keepout", Tests.LayoutV2ClampsNarrativeBeforeRightKeepout)
+    ,("layout_v2_partitions_fixed_label_peers", Tests.LayoutV2PartitionsFixedLabelPeers)
+    ,("layout_v2_keeps_table_text_inside_parent_cell", Tests.LayoutV2KeepsTableTextInsideParentCell)
     ,("fixed_label_slot_uses_free_space_until_neighbor_midpoint", Tests.FixedLabelSlotUsesFreeSpaceUntilNeighborMidpoint)
     ,("isolated_fixed_label_slot_stays_close_to_source_visual_width", Tests.IsolatedFixedLabelSlotStaysCloseToSourceVisualWidth)
     ,("isolated_fixed_label_slot_allows_source_height_english_label", Tests.IsolatedFixedLabelSlotAllowsSourceHeightEnglishLabel)
@@ -2635,6 +2639,74 @@ internal static class Tests
         AssertEx.Equal(
             1,
             NarrativeOccupancyDetector.DetectGroups(rows, medianTextHeight: 4).Length);
+    }
+
+    public static void LayoutV2AssignsEveryChangedRecordOnce()
+    {
+        LayoutV2Input[] inputs =
+        [
+            new("a", "panel", LayoutV2Kind.Narrative, new Rect2(0, 10, 20, 20), new Rect2(0, 0, 100, 50), 2, []),
+            new("b", "panel", LayoutV2Kind.Narrative, new Rect2(30, 10, 50, 20), new Rect2(0, 0, 100, 50), 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+
+        AssertEx.Equal(2, decisions.Length);
+        AssertEx.Equal(2, decisions.Select(decision => decision.RecordId).Distinct().Count());
+    }
+
+    public static void LayoutV2ClampsNarrativeBeforeRightKeepout()
+    {
+        LayoutV2Input input = new(
+            "note",
+            "panel",
+            LayoutV2Kind.Narrative,
+            new Rect2(10, 10, 70, 40),
+            new Rect2(0, 0, 100, 50),
+            2,
+            [new Rect2(80, 15, 95, 35)]);
+
+        LayoutV2Decision decision = LayoutV2Planner.Plan([input]).Single();
+
+        AssertEx.Equal(10d, decision.AllowedBounds.Left);
+        AssertEx.Equal(76d, decision.AllowedBounds.Right);
+        AssertEx.True(decision.ForceWrap);
+        AssertEx.False(decision.ManualReview);
+    }
+
+    public static void LayoutV2PartitionsFixedLabelPeers()
+    {
+        LayoutV2Input[] inputs =
+        [
+            new("left", "row", LayoutV2Kind.FixedLabel, new Rect2(0, 10, 10, 20), new Rect2(0, 0, 40, 30), 2, []),
+            new("right", "row", LayoutV2Kind.FixedLabel, new Rect2(20, 10, 30, 20), new Rect2(0, 0, 40, 30), 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+        Rect2 left = decisions.Single(decision => decision.RecordId == "left").AllowedBounds;
+        Rect2 right = decisions.Single(decision => decision.RecordId == "right").AllowedBounds;
+
+        AssertEx.True(left.Right <= right.Left);
+        AssertEx.True(left.Contains(inputs[0].SourceBounds));
+        AssertEx.True(right.Contains(inputs[1].SourceBounds));
+    }
+
+    public static void LayoutV2KeepsTableTextInsideParentCell()
+    {
+        Rect2 cell = new(0, 0, 30, 10);
+        LayoutV2Input input = new(
+            "cell",
+            "cell-1",
+            LayoutV2Kind.TableCell,
+            new Rect2(2, 2, 12, 8),
+            cell,
+            2,
+            []);
+
+        LayoutV2Decision decision = LayoutV2Planner.Plan([input]).Single();
+
+        AssertEx.True(cell.Contains(decision.AllowedBounds));
+        AssertEx.True(decision.AllowedBounds.Contains(input.SourceBounds));
     }
 
     public static void HighGeometryContactIsSoftWhenTextOverlapGateIsClear()
