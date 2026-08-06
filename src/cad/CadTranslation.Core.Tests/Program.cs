@@ -95,6 +95,7 @@ var tests = new (string Name, Action Run)[]
     ,("layout_v2_runs_one_fit_and_one_audit", Tests.LayoutV2RunsOneFitAndOneAudit)
     ,("layout_v2_narrative_fragments_share_one_panel", Tests.LayoutV2NarrativeFragmentsShareOnePanel)
     ,("layout_v2_classifies_large_unframed_mtext_as_narrative", Tests.LayoutV2ClassifiesLargeUnframedMTextAsNarrative)
+    ,("layout_v2_classifies_long_notes_inside_sheet_frame_as_narrative", Tests.LayoutV2ClassifiesLongNotesInsideSheetFrameAsNarrative)
     ,("topology_capture_excludes_erased_entities", Tests.TopologyCaptureExcludesErasedEntities)
     ,("topology_capture_excludes_regenerated_dimension_text", Tests.TopologyCaptureExcludesRegeneratedDimensionText)
     ,("fixed_label_slot_uses_free_space_until_neighbor_midpoint", Tests.FixedLabelSlotUsesFreeSpaceUntilNeighborMidpoint)
@@ -2752,6 +2753,18 @@ internal static class Tests
                 "AcDbMText",
                 "Drive",
                 new Rect2(10, 10, 20, 14),
+                2));
+    }
+
+    public static void LayoutV2ClassifiesLongNotesInsideSheetFrameAsNarrative()
+    {
+        AssertEx.Equal(
+            LayoutV2Kind.Narrative,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.ClosedFrame,
+                "AcDbMText",
+                "Technical Requirements: Before start-up, lubricate every rotating part and inspect all guards.",
+                new Rect2(10, 10, 80, 30),
                 2));
     }
 

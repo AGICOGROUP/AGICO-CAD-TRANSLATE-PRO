@@ -263,6 +263,22 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertIn("user-supplied project glossary", skill_text)
         self.assertIn("ASCII word boundary", skill_text)
 
+    def test_fixed_labels_scale_before_any_move(self):
+        skill_root = Path(__file__).resolve().parents[1]
+        source = (
+            skill_root
+            / "src"
+            / "cad"
+            / "CadTranslation.AutoCAD2025"
+            / "FixedLabelLayout.cs"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("allowed.Contains(bounds) || TryMoveInside", source)
+        self.assertGreater(
+            source.index("moved = TryMoveInside"),
+            source.rindex("foreach (double scale"),
+        )
+
     def test_packaged_plugin_is_present_and_matches_release_build_when_available(self):
         skill_root = Path(__file__).resolve().parents[1]
         source_root = skill_root / "src" / "cad"

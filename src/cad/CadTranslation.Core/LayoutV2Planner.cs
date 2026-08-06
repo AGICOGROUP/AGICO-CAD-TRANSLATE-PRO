@@ -41,7 +41,7 @@ public static class LayoutV2Classifier
         {
             return LayoutV2Kind.Narrative;
         }
-        if (regionKind is LayoutRegionKind.TitleBlock or LayoutRegionKind.ClosedFrame ||
+        if (regionKind == LayoutRegionKind.TitleBlock ||
             !string.Equals(objectType, "AcDbMText", StringComparison.Ordinal) ||
             candidateText.Length < 80)
         {
