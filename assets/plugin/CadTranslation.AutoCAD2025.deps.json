@@ -1,0 +1,56 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "CadTranslation.AutoCAD2025/1.0.0": {
+        "dependencies": {
+          "CadTranslation.Contracts": "1.0.0",
+          "CadTranslation.Core": "1.0.0"
+        },
+        "runtime": {
+          "CadTranslation.AutoCAD2025.dll": {}
+        }
+      },
+      "CadTranslation.Contracts/1.0.0": {
+        "runtime": {
+          "CadTranslation.Contracts.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "CadTranslation.Core/1.0.0": {
+        "dependencies": {
+          "CadTranslation.Contracts": "1.0.0"
+        },
+        "runtime": {
+          "CadTranslation.Core.dll": {
+            "assemblyVersion": "1.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "CadTranslation.AutoCAD2025/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "CadTranslation.Contracts/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "CadTranslation.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

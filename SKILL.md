@@ -5,35 +5,31 @@ description: Use when translating Chinese text to English in AutoCAD 2025 DWG dr
 
 # Translate CAD Files
 
-Use the bundled AutoCAD runner. Never overwrite the source.
-
-## Context budget
-
-Never open or print the complete manifest, translation output, `layout-audit.json`, or `logical-flow-report.json`. Use bounded batches and `audit-summary.json`; full diagnostics remain on disk.
+Use the bundled runner. Never overwrite the source. This v2 release uses one source-derived allowed region for each changed label or narrative group, followed by one fit and one audit.
 
 ## Workflow
 
-1. Run `powershell -ExecutionPolicy Bypass -File scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2025 was verified in this task.
-2. Run `scripts/run.ps1 export --source <drawing> --job <new-job-dir>` to create an isolated, sealed job.
-3. Run `scripts/run.ps1 prepare-translations --job <job-dir> --max-source-chars 6000`. Read one `exchange/translation-worklist/part-*.jsonl` at a time; non-Chinese records stay out of context.
-4. Translate each batch to a matching file in `exchange/translated-batches/` with only `recordId` and `translatedText`. For cement-process drawings, use `references/cement-industry-glossary.md` only for current terms. Preserve protected markers exactly and in order. Put no commentary in JSONL.
-5. Run `scripts/run.ps1 assemble-translations --job <job-dir> --translated <job-dir>/exchange/translated-batches`. It restores fixed fields, fills non-Chinese records locally, validates coverage and markers, and writes `exchange/translations.output.jsonl`.
-6. Run `scripts/run.ps1 import --job <job-dir> --translations <job-dir>/exchange/translations.output.jsonl`. Import performs the pre-import language gate internally; do not run `check-translations` separately. It imports once, composes eligible dense prose, re-exports once, and publishes only after `artifacts/postcomposition-language-check.json` has zero Han, CJK/fullwidth punctuation, or CJK compatibility residue in `plainText` and `rawText`. Each terminal result ends that Core Console stage; never wait for or close AutoCAD manually. The default import/compose timeout is 1800 seconds; set `--timeout-seconds` only when drawing size requires a different bound.
-7. Run `scripts/run.ps1 audit-summary --job <job-dir>`. A nonzero exit is a hard failure for language residue, missing audit coverage, or segment overflow. Treat any printable-frame overflow as a hard failure. If `requiresVisualReview` is true, follow `references/visual-audit.md` only for changed, composed, or high-risk areas.
-8. Run `scripts/run.ps1 status --job <job-dir>`; deliver only `results/candidate.dwg` or `.dxf`.
+1. Run `scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2025 was verified in this task.
+2. Run `scripts/run.ps1 export --source <drawing> --job <new-job-dir>`.
+3. Run `scripts/run.ps1 prepare-translations --job <job-dir> --max-source-chars 6000`.
+4. Read one `exchange/translation-worklist/part-*.jsonl` at a time. Write matching files under `exchange/translated-batches/` containing only `recordId` and `translatedText`. Preserve protected markers exactly.
+5. Run `scripts/run.ps1 assemble-translations --job <job-dir> --translated <job-dir>/exchange/translated-batches`.
+6. Run `scripts/run.ps1 import --job <job-dir> --translations <job-dir>/exchange/translations.output.jsonl`. Import performs the pre-import language gate internally and writes `artifacts/postcomposition-language-check.json`. Do not retry automatically or close AutoCAD manually.
+7. Run `scripts/run.ps1 audit-summary --job <job-dir>`. Treat any printable-frame overflow as a hard failure. If `requiresVisualReview` is true, use `references/visual-audit.md` only for changed, composed, or high-risk areas.
+8. Run `scripts/run.ps1 status --job <job-dir>` and deliver only `results/candidate.dwg` or `.dxf`.
 
-Do not retry export or import automatically.
+Never open or print the complete manifest, translation output, `layout-audit.json`, or `logical-flow-report.json`.
 
-## Terminology contract
+## Translation contract
 
-Precedence: user-supplied project glossary, bundled cement glossary, established engineering usage. Match the longest complete Chinese term first and use one equivalent consistently. Preserve models, tags, standards, quantities, and markers. In narrow title-block cells, shorten only if the full term cannot fit one line: omit a head term already supplied by adjacent unchanged English; use standard abbreviations such as `PROC.` or `PROP.` last. Insert an ASCII word boundary between restored alphanumeric markers and following English. Do not load the cement glossary for unrelated drawings.
+Use terminology in this order: user-supplied project glossary, `references/cement-industry-glossary.md` for cement drawings, then established engineering usage. Match the longest complete Chinese term. Preserve models, standards, quantities, and markers; insert an ASCII word boundary after restored alphanumeric markers when needed.
 
-## Layout contract
+If equivalent English already exists in the same object or a nearby same-row/stacked pair, preserve that English and remove only Chinese. Color and layer differences do not break a pair. Do not treat technical codes as translations.
 
-Preserve divisions, titles, tables, diagrams, dimensions, title blocks, and paragraph regions. Compose only high-confidence prose in source-derived note columns; keep short labels, table cells, dimensions, attributes, symbols, and captions separate.
+## Layout v2 contract
 
-If one object contains equivalent English, remove its Chinese and preserve the English. For separate objects, pair Chinese and English one-to-one from the repeated local layout: same-row left/right or stacked top/bottom, nearby, and similar in height; different colors or layers do not break a pair. Use clear equivalent pairs to learn the local offset so nonliteral pairs such as `燃料` beside `Petroleum Coke` are also recognized. Remove only Chinese. Recognize common title-block pairs: approve, check, design, project, item, title, and stage. Preserve the English object's text, font, height, width factor, alignment, and position. Codes such as `C30` and `HRB400` are not translations.
+Classify changed text once as table cell, narrative panel, or fixed label. Plan its allowed region from source geometry before changing text. Tables, diagrams, dimensions, title blocks, unchanged English, neighboring regions, and the innermost printable frame are hard keep-outs.
 
-Preserve source height and the title/subtitle/body/annotation hierarchy. Repeated equivalent diagram labels keep their shared source height. Tables, diagrams, dimensions, title blocks, unchanged English, and neighboring columns are hard keep-outs. The innermost printable sheet frame, not outer block extents, is a hard boundary. Reject the candidate if any changed text crosses it. For fixed/table text: keep source height; move only inside its source-derived slot; then compress width; reduce height only if still impossible. Padding must never exclude source text. Do not go below 55% source height or globally beautify/realign.
+Preserve font, alignment, source height, and title/body/annotation hierarchy. Fit in this order: wrap, compress width, then reduce height. Move only inside the planned region; never reduce below 55% source height. Reject the candidate if any changed text crosses it, enters a hard keep-out, has an unresolved severe new overlap, or lacks a layout decision. Do not globally beautify or run iterative collision correction.
 
-Read `references/exchange-format.md` only for batch, marker, or contract failures. This release is Chinese-to-English only. DWG is verified; DXF execution is available but sample verification is pending. MLeader, native Table, XREF, and proxy objects require manual review. Auditable .NET source is bundled under `src/cad`; runtime DLL hashes must match the corresponding release build.
+Chinese-to-English DWG is verified. DXF requires manual verification. MLeader, native Table, XREF, and proxy objects require review. Runtime DLL hashes must match the bundled `src/cad` Release build.

@@ -218,6 +218,24 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertIn("model-facing worklist", exchange_format)
         self.assertNotIn("automatic second scan", exchange_format)
 
+    def test_skill_contract_uses_single_pass_layout_v2(self):
+        skill_root = Path(__file__).resolve().parents[1]
+        skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+        importer = (
+            skill_root
+            / "src"
+            / "cad"
+            / "CadTranslation.AutoCAD2025"
+            / "Importer.cs"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("one source-derived allowed region", skill_text)
+        self.assertIn("one fit and one audit", skill_text)
+        self.assertIn("wrap, compress width, then reduce height", skill_text)
+        self.assertLess(len(skill_text.split()), 450)
+        self.assertIn("LayoutOptimizerV2.Optimize", importer)
+        self.assertNotIn("while (layoutAudit.PassIndex", importer)
+
     def test_cement_glossary_is_packaged_for_authoritative_term_selection(self):
         skill_root = Path(__file__).resolve().parents[1]
         glossary_path = skill_root / "references" / "cement-industry-glossary.md"
