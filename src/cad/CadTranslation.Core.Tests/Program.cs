@@ -92,6 +92,8 @@ var tests = new (string Name, Action Run)[]
     ,("layout_v2_clamps_narrative_before_right_keepout", Tests.LayoutV2ClampsNarrativeBeforeRightKeepout)
     ,("layout_v2_partitions_fixed_label_peers", Tests.LayoutV2PartitionsFixedLabelPeers)
     ,("layout_v2_keeps_table_text_inside_parent_cell", Tests.LayoutV2KeepsTableTextInsideParentCell)
+    ,("layout_v2_runs_one_fit_and_one_audit", Tests.LayoutV2RunsOneFitAndOneAudit)
+    ,("layout_v2_narrative_fragments_share_one_panel", Tests.LayoutV2NarrativeFragmentsShareOnePanel)
     ,("fixed_label_slot_uses_free_space_until_neighbor_midpoint", Tests.FixedLabelSlotUsesFreeSpaceUntilNeighborMidpoint)
     ,("isolated_fixed_label_slot_stays_close_to_source_visual_width", Tests.IsolatedFixedLabelSlotStaysCloseToSourceVisualWidth)
     ,("isolated_fixed_label_slot_allows_source_height_english_label", Tests.IsolatedFixedLabelSlotAllowsSourceHeightEnglishLabel)
@@ -2661,7 +2663,7 @@ internal static class Tests
             "note",
             "panel",
             LayoutV2Kind.Narrative,
-            new Rect2(10, 10, 70, 40),
+            new Rect2(10, 10, 85, 40),
             new Rect2(0, 0, 100, 50),
             2,
             [new Rect2(80, 15, 95, 35)]);
@@ -2707,6 +2709,27 @@ internal static class Tests
 
         AssertEx.True(cell.Contains(decision.AllowedBounds));
         AssertEx.True(decision.AllowedBounds.Contains(input.SourceBounds));
+    }
+
+    public static void LayoutV2RunsOneFitAndOneAudit()
+    {
+        AssertEx.Equal(1, LayoutV2ExecutionPolicy.FitPasses);
+        AssertEx.Equal(1, LayoutV2ExecutionPolicy.AuditPasses);
+        AssertEx.False(LayoutV2ExecutionPolicy.AllowsGlobalCorrection);
+    }
+
+    public static void LayoutV2NarrativeFragmentsShareOnePanel()
+    {
+        Rect2 panel = new(0, 0, 100, 50);
+        LayoutV2Input[] inputs =
+        [
+            new("line-1", "notes", LayoutV2Kind.Narrative, new Rect2(10, 30, 40, 35), panel, 2, []),
+            new("line-2", "notes", LayoutV2Kind.Narrative, new Rect2(20, 20, 45, 25), panel, 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+
+        AssertEx.Equal(decisions[0].AllowedBounds, decisions[1].AllowedBounds);
     }
 
     public static void HighGeometryContactIsSoftWhenTextOverlapGateIsClear()

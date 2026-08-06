@@ -38,6 +38,26 @@ public static class LayoutV2Planner
                  inputs.GroupBy(input => (input.GroupId, input.Kind)))
         {
             LayoutV2Input[] members = group.ToArray();
+            if (group.Key.Kind == LayoutV2Kind.Narrative)
+            {
+                Rect2 sourceEnvelope = Envelope(members.Select(input => input.SourceBounds));
+                Rect2 parent = members.Aggregate(
+                    members[0].ParentBounds,
+                    (current, input) => Intersect(current, input.ParentBounds));
+                LayoutV2Input representative = members[0] with
+                {
+                    SourceBounds = sourceEnvelope,
+                    ParentBounds = parent,
+                    HardKeepouts = members.SelectMany(input => input.HardKeepouts).Distinct().ToArray()
+                };
+                Rect2 shared = ClampNarrative(parent, representative, tolerance);
+                foreach (LayoutV2Input input in members)
+                {
+                    allowedById.Add(input.RecordId, shared);
+                }
+                continue;
+            }
+
             IReadOnlyDictionary<string, Rect2> slots = AllocatePeerSlots(members, tolerance);
             foreach (LayoutV2Input input in members)
             {
@@ -60,7 +80,10 @@ public static class LayoutV2Planner
             Rect2 allowed = allowedById[input.RecordId];
             bool valid = allowed.Width > tolerance &&
                          allowed.Height > tolerance &&
-                         allowed.Contains(input.SourceBounds, tolerance);
+                         (input.Kind == LayoutV2Kind.Narrative
+                             ? allowed.Left <= input.SourceBounds.Left + tolerance &&
+                               allowed.Right >= input.SourceBounds.Left + input.OriginalTextHeight - tolerance
+                             : allowed.Contains(input.SourceBounds, tolerance));
             return new LayoutV2Decision(
                 input.RecordId,
                 input.Kind,
@@ -75,12 +98,12 @@ public static class LayoutV2Planner
         IReadOnlyList<LayoutV2Input> inputs,
         double tolerance)
     {
-        if (inputs.Count == 1)
+        if (inputs.Count == 1 || inputs[0].Kind == LayoutV2Kind.Narrative)
         {
-            return new Dictionary<string, Rect2>(StringComparer.Ordinal)
-            {
-                [inputs[0].RecordId] = inputs[0].ParentBounds
-            };
+            return inputs.ToDictionary(
+                input => input.RecordId,
+                input => input.ParentBounds,
+                StringComparer.Ordinal);
         }
 
         Rect2 parent = inputs.Aggregate(
@@ -105,7 +128,7 @@ public static class LayoutV2Planner
         foreach (Rect2 keepout in input.HardKeepouts)
         {
             if (!VerticallyRelevant(input.SourceBounds, keepout, tolerance) ||
-                keepout.Left < input.SourceBounds.Right - tolerance)
+                keepout.Left <= input.SourceBounds.Left + gutter)
             {
                 continue;
             }
@@ -113,7 +136,7 @@ public static class LayoutV2Planner
             right = Math.Min(right, keepout.Left - gutter);
         }
 
-        right = Math.Max(right, input.SourceBounds.Right);
+        right = Math.Max(right, input.SourceBounds.Left + input.OriginalTextHeight);
         return new Rect2(left, allowed.Bottom, right, allowed.Top);
     }
 
@@ -139,6 +162,16 @@ public static class LayoutV2Planner
         Math.Max(first.Bottom, second.Bottom),
         Math.Min(first.Right, second.Right),
         Math.Min(first.Top, second.Top));
+
+    private static Rect2 Envelope(IEnumerable<Rect2> values)
+    {
+        Rect2[] items = values.ToArray();
+        return new Rect2(
+            items.Min(item => item.Left),
+            items.Min(item => item.Bottom),
+            items.Max(item => item.Right),
+            items.Max(item => item.Top));
+    }
 
     private static void Validate(IReadOnlyList<LayoutV2Input> inputs)
     {

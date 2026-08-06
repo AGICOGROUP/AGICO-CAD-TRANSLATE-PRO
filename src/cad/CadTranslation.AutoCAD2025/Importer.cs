@@ -90,7 +90,7 @@ internal static class Importer
                             DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false);
                             write.Adapter.Write(value, write.Manifest.Slot, write.RestoredText);
                         }
-                        layoutResult = LayoutOptimizer.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline);
+                        layoutResult = LayoutOptimizerV2.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline);
                         transaction.Commit();
                     }
                     SaveTemporaryOutput(sideDatabase, temporaryOutput, Path.GetExtension(context.Config.WorkingPath));
@@ -107,44 +107,6 @@ internal static class Importer
                 layoutBaseline,
                 layoutResult,
                 passIndex: 1);
-            if (layoutAudit.ManualReview.Count > 0)
-            {
-                IReadOnlyDictionary<string, GlobalCorrectionTarget> correctionTargets = resolved
-                    .ToDictionary(
-                        write => write.Manifest.RecordId,
-                        write => new GlobalCorrectionTarget(write.Manifest, write.RestoredText),
-                        StringComparer.Ordinal);
-                while (layoutAudit.PassIndex < LayoutCorrectionPolicy.MaximumPasses &&
-                       layoutAudit.Risks.Any(risk =>
-                           string.Equals(risk.Code, "text-overlap", StringComparison.OrdinalIgnoreCase) &&
-                           string.Equals(risk.Level, "high", StringComparison.OrdinalIgnoreCase)))
-                {
-                    AtomicFile.WriteUtf8(
-                        Path.Combine(
-                            context.Config.ArtifactDirectory,
-                            $"layout-audit-pass{layoutAudit.PassIndex}.json"),
-                        JsonSerializer.Serialize(layoutAudit, JsonDefaults.Options));
-                    LayoutAdjustment[] corrections = ApplyGlobalCorrectionPass(
-                        temporaryOutput,
-                        Path.GetExtension(context.Config.WorkingPath),
-                        layoutBaseline,
-                        layoutResult,
-                        layoutAudit,
-                        correctionTargets);
-                    if (corrections.Length == 0)
-                    {
-                        break;
-                    }
-
-                    layoutResult = LayoutOptimizer.MergeCorrections(layoutResult, corrections);
-                    layoutAudit = AuditTemporaryOutput(
-                        temporaryOutput,
-                        Path.GetExtension(context.Config.WorkingPath),
-                        layoutBaseline,
-                        layoutResult,
-                        passIndex: layoutAudit.PassIndex + 1);
-                }
-            }
             if (layoutAudit.MissingBlockInstancePaths.Count > 0)
                 throw new CommandProtocolException("layout_instance_audit_incomplete", "Not every block instance received a layout audit.");
             AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "layout-adjustments.json"),

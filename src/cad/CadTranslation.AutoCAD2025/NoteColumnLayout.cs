@@ -40,7 +40,8 @@ internal static class NoteColumnLayout
         Transaction transaction,
         IReadOnlyList<LayoutTargetSnapshot> targets,
         IReadOnlyList<CadLayoutText> topology,
-        double minimumHeightScale = LayoutFitPolicy.EmergencyMinimumHeightScale)
+        double minimumHeightScale = LayoutFitPolicy.EmergencyMinimumHeightScale,
+        Rect2? allowedOverride = null)
     {
         if (targets.Count == 0 || topology.Count != targets.Count || topology[0].Region is null)
         {
@@ -102,7 +103,7 @@ internal static class NoteColumnLayout
             .OrderByDescending(item => item.Topology.Source.Bounds.Top)
             .ThenBy(item => item.Topology.Source.Bounds.Left)
             .ToArray();
-        Rect2 region = ordered[0].Topology.Region!.Bounds;
+        Rect2 region = allowedOverride ?? ordered[0].Topology.Region!.Bounds;
         double medianHeight = Median(ordered.Select(item => item.OriginalHeight));
         WorkingRow[] rows = BuildRows(ordered, medianHeight);
         Rect2 inner = CadLayoutGeometry.Inset(region, medianHeight * 0.10);
