@@ -459,7 +459,29 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual("failed", failed["status"])
             self.assertEqual(["a"], failed["missingEnglishRecordIds"])
 
-    def test_bilingual_mode_is_stored_outside_strict_autocad_job_config(self):
+    def test_output_mode_defaults_to_replace_and_is_sealed_in_job_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"drawing")
+            job = root / "job"
+
+            config = cad_translate.prepare_export_job(source, job, "zh-CN", "en")
+
+            self.assertEqual("replace", config["outputMode"])
+            self.assertEqual("replace", cad_translate.read_output_mode(job))
+
+    def test_legacy_english_output_mode_normalizes_to_replace(self):
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            (job / "config").mkdir()
+            (job / "config" / "output-mode.json").write_text(
+                json.dumps({"schemaVersion": "1.0", "outputMode": "english"}),
+                encoding="utf-8",
+            )
+
+            self.assertEqual("replace", cad_translate.read_output_mode(job))
+
+    def test_bilingual_mode_is_stored_in_strict_autocad_job_config(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.dwg"; source.write_bytes(b"drawing")
@@ -469,7 +491,7 @@ class CadTranslateDryTests(unittest.TestCase):
                 source, job, "zh-CN", "en", output_mode="bilingual"
             )
 
-            self.assertNotIn("outputMode", config)
+            self.assertEqual("bilingual", config["outputMode"])
             self.assertEqual("bilingual", cad_translate.read_output_mode(job))
             self.assertTrue((job / "config" / "output-mode.json").is_file())
 

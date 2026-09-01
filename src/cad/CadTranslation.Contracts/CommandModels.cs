@@ -13,7 +13,21 @@ public sealed record JobConfig(
     string ResultPath,
     string ArtifactDirectory,
     string SourceLanguage,
-    string TargetLanguage);
+    string TargetLanguage,
+    string OutputMode);
+
+public static class OutputModePolicy
+{
+    public const string Replace = "replace";
+    public const string Bilingual = "bilingual";
+
+    public static string Normalize(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "english" or Replace => Replace,
+        Bilingual => Bilingual,
+        _ => throw new ArgumentException($"Unsupported output mode: {value}", nameof(value))
+    };
+}
 
 public sealed record CommandResult(
     string SchemaVersion,

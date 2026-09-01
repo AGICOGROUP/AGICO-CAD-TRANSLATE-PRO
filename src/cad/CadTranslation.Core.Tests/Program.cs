@@ -27,6 +27,8 @@ var tests = new (string Name, Action Run)[]
     ("verify_structure_errors_still_read_candidate_content", Tests.VerifyStructureErrorsStillReadCandidateContent),
     ("verify_preflight_failure_has_safe_atomic_artifact_route", Tests.VerifyPreflightFailureHasSafeAtomicArtifactRoute),
     ("job_config_directory_resolves_to_its_parent_job_root", Tests.JobConfigDirectoryResolvesToItsParentJobRoot)
+    ,("output_mode_policy_normalizes_legacy_english", Tests.OutputModePolicyNormalizesLegacyEnglish)
+    ,("output_mode_policy_rejects_unknown_mode", Tests.OutputModePolicyRejectsUnknownMode)
     ,("layout_fit_wraps_before_compressing_or_shrinking", Tests.LayoutFitWrapsBeforeCompressingOrShrinking)
     ,("layout_fit_respects_width_and_height_floors", Tests.LayoutFitRespectsWidthAndHeightFloors)
     ,("fixed_labels_never_use_emergency_ten_percent_height", Tests.FixedLabelsNeverUseEmergencyTenPercentHeight)
@@ -1276,6 +1278,18 @@ internal static class Tests
         AssertEx.Equal(job, JobPathPolicy.ResolveJobRoot(Path.Combine(job, "config", "export-job.json")));
         AssertEx.Equal(job, JobPathPolicy.ResolveJobRoot(Path.Combine(job, "import-job.json")));
         AssertEx.Equal(Path.Combine(job, "other"), JobPathPolicy.ResolveJobRoot(Path.Combine(job, "other", "job.json")));
+    }
+
+    public static void OutputModePolicyNormalizesLegacyEnglish()
+    {
+        AssertEx.Equal("replace", OutputModePolicy.Normalize("english"));
+        AssertEx.Equal("replace", OutputModePolicy.Normalize(null));
+        AssertEx.Equal("bilingual", OutputModePolicy.Normalize(" BILINGUAL "));
+    }
+
+    public static void OutputModePolicyRejectsUnknownMode()
+    {
+        AssertEx.Throws<ArgumentException>(() => OutputModePolicy.Normalize("mixed"));
     }
 
     // Break caught: the optimizer shrinks English text before trying word wrapping.

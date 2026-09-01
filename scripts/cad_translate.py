@@ -20,7 +20,8 @@ DIAGNOSTIC_EXAMPLE_LIMIT = 20
 SUPPORTED_SOURCE_LANGUAGES = {"zh", "zh-cn", "zh-hans"}
 SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb"}
 DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800}
-OUTPUT_MODES = {"english", "bilingual"}
+OUTPUT_MODES = {"replace", "bilingual"}
+LEGACY_OUTPUT_MODE_ALIASES = {"english": "replace"}
 
 def absolute(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
@@ -101,9 +102,14 @@ def validate_language_direction(source_language: str, target_language: str) -> N
             "(source: zh/zh-CN/zh-Hans; target: en/en-US/en-GB)."
         )
 
-def write_output_mode(job: Path, mode: str) -> Path:
-    if mode not in OUTPUT_MODES:
+def normalize_output_mode(mode: str) -> str:
+    normalized = LEGACY_OUTPUT_MODE_ALIASES.get(mode.strip().lower(), mode.strip().lower())
+    if normalized not in OUTPUT_MODES:
         raise ValueError(f"Unsupported output mode: {mode}")
+    return normalized
+
+def write_output_mode(job: Path, mode: str) -> Path:
+    mode = normalize_output_mode(mode)
     target = absolute(job) / "config" / "output-mode.json"
     target.write_text(json.dumps({"schemaVersion": "1.0", "outputMode": mode}, indent=2), encoding="utf-8")
     return target
@@ -111,13 +117,11 @@ def write_output_mode(job: Path, mode: str) -> Path:
 def read_output_mode(job: Path) -> str:
     target = absolute(job) / "config" / "output-mode.json"
     if not target.is_file():
-        return "english"
+        return "replace"
     mode = str(json.loads(target.read_text(encoding="utf-8")).get("outputMode", ""))
-    if mode not in OUTPUT_MODES:
-        raise ValueError(f"Unsupported output mode: {mode}")
-    return mode
+    return normalize_output_mode(mode)
 
-def prepare_export_job(source: Path, job: Path, source_language: str, target_language: str, output_mode: str = "english") -> dict[str, object]:
+def prepare_export_job(source: Path, job: Path, source_language: str, target_language: str, output_mode: str = "replace") -> dict[str, object]:
     source, job = absolute(source), absolute(job)
     assert_source(source)
     validate_language_direction(source_language, target_language)
@@ -127,7 +131,8 @@ def prepare_export_job(source: Path, job: Path, source_language: str, target_lan
         (job / name).mkdir(parents=True, exist_ok=True)
     working = job / "working" / f"source{source.suffix.lower()}"
     shutil.copy2(source, working)
-    config: dict[str, object] = {"schemaVersion": "1.0", "jobId": job.name, "operation": "export", "sourcePath": str(source), "workingPath": str(working), "sourceSha256": sha256(source), "manifestPath": str(job / "exchange" / "manifest.input.jsonl"), "translationPath": None, "outputPath": str(job / "results" / f"candidate{source.suffix.lower()}"), "resultPath": str(job / "artifacts" / "export-result.json"), "artifactDirectory": str(job / "artifacts"), "sourceLanguage": source_language, "targetLanguage": target_language}
+    output_mode = normalize_output_mode(output_mode)
+    config: dict[str, object] = {"schemaVersion": "1.0", "jobId": job.name, "operation": "export", "sourcePath": str(source), "workingPath": str(working), "sourceSha256": sha256(source), "manifestPath": str(job / "exchange" / "manifest.input.jsonl"), "translationPath": None, "outputPath": str(job / "results" / f"candidate{source.suffix.lower()}"), "resultPath": str(job / "artifacts" / "export-result.json"), "artifactDirectory": str(job / "artifacts"), "sourceLanguage": source_language, "targetLanguage": target_language, "outputMode": output_mode}
     (job / "config" / "export-job.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     write_output_mode(job, output_mode)
     return config
@@ -319,10 +324,9 @@ def validate_complete_translations(manifest_path: Path, translations_path: Path)
             if actual != markers: raise ValueError(f"protected marker mismatch: {translation['recordId']}")
     return len(expected)
 
-def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None, output_mode: str = "english") -> dict[str, object]:
+def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None, output_mode: str = "replace") -> dict[str, object]:
     """Reject incomplete language conversion before AutoCAD is started."""
-    if output_mode not in OUTPUT_MODES:
-        raise ValueError(f"Unsupported output mode: {output_mode}")
+    output_mode = normalize_output_mode(output_mode)
     record_count = validate_complete_translations(manifest_path, translations_path)
     manifest = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     translations = [json.loads(line) for line in translations_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
@@ -340,7 +344,7 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
         if TARGET_LANGUAGE_RESIDUE.search(source_text):
             translated_source_records += 1
         source_has_chinese = bool(TARGET_LANGUAGE_RESIDUE.search(source_text))
-        if output_mode == "english" and TARGET_LANGUAGE_RESIDUE.search(translated_text):
+        if output_mode == "replace" and TARGET_LANGUAGE_RESIDUE.search(translated_text):
             residual_ids.append(record_id)
         if output_mode == "bilingual" and source_has_chinese:
             bilingual_ids.append(record_id)
@@ -371,9 +375,8 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
-def check_exported_candidate_language(manifest_path: Path, report_path: Path, output_mode: str = "english") -> dict[str, object]:
-    if output_mode not in OUTPUT_MODES:
-        raise ValueError(f"Unsupported output mode: {output_mode}")
+def check_exported_candidate_language(manifest_path: Path, report_path: Path, output_mode: str = "replace") -> dict[str, object]:
+    output_mode = normalize_output_mode(output_mode)
     records = [
         json.loads(line)
         for line in manifest_path.read_text(encoding="utf-8-sig").splitlines()
@@ -515,7 +518,7 @@ def summarize_audit(job: Path) -> dict[str, object]:
         "language": {
             "present": language_path.is_file(),
             "status": language.get("status"),
-            "outputMode": language.get("outputMode", "english"),
+            "outputMode": language.get("outputMode", "replace"),
             "chineseResidualCount": int(
                 language.get(
                     "chineseResidualCount",
@@ -543,7 +546,7 @@ def summarize_audit(job: Path) -> dict[str, object]:
     if summary["layout"]["missingBlockInstanceCount"]: gate_errors.append("layout_instance_audit_incomplete")
     if overflow_count: gate_errors.append("segment_overflow")
     if summary["language"]["status"] != "passed" or (
-        summary["language"]["outputMode"] == "english" and summary["language"]["chineseResidualCount"]
+        summary["language"]["outputMode"] == "replace" and summary["language"]["chineseResidualCount"]
     ):
         gate_errors.append("target_language_residue")
     if summary["language"]["invalidTranslationCount"]: gate_errors.append("invalid_translation")
@@ -708,7 +711,7 @@ def run_export(
     target_language: str,
     autocad_root: Path,
     timeout_seconds: int | None = None,
-    output_mode: str = "english",
+    output_mode: str = "replace",
 ) -> int:
     source = absolute(source)
     assert_source(source)
@@ -852,7 +855,7 @@ def _bounded_cli_output(report: dict[str, object]) -> dict[str, object]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--autocad-root", type=Path, default=AUTOCAD_2025); sub = parser.add_subparsers(dest="command", required=True)
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
-    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="english")
+    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="replace")
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
     imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True); imported.add_argument("--timeout-seconds", type=int)
