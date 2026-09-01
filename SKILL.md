@@ -1,6 +1,6 @@
 ---
 name: translate-cad-files
-description: Translate AutoCAD 2027 DWG text as single-language replacement or bilingual preserve-and-add output.
+description: Translate AutoCAD 2025 DWG text as single-language replacement or bilingual preserve-and-add output.
 ---
 
 # Translate CAD Files
@@ -17,7 +17,7 @@ Only `zh-CN -> en` is verified. Other directions require a registered policy and
 
 ## Workflow
 
-1. Run `scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2027 was verified in this task.
+1. Run `scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2025 was verified in this task.
 2. Run `scripts/run.ps1 export --source <drawing> --job <new-job-dir> --output-mode <replace|bilingual>`.
 3. Run `scripts/run.ps1 prepare-translations --job <job-dir> --max-source-chars 6000`.
 4. Process one worklist part at a time. Preserve markers. In `replace`, write target text only. In `bilingual`, retain source text and add target text unless equivalent target text exists.
