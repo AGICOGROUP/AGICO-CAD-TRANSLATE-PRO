@@ -130,8 +130,9 @@ internal static class LayoutOptimizerV2
             }
         }
 
-        Rect2[] hardKeepouts = kind == LayoutV2Kind.Narrative
-            ? definition.Regions
+        Rect2[] hardKeepouts = kind switch
+        {
+            LayoutV2Kind.Narrative => definition.Regions
                 .Where(region => region.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.TitleBlock)
                 .Where(region => text.Region is null || !string.Equals(region.Id, text.Region.Id, StringComparison.Ordinal))
                 .Select(region => region.Bounds)
@@ -140,8 +141,13 @@ internal static class LayoutOptimizerV2
                     .Select(other => other.Source.Bounds))
                 .Concat(definition.ProtectedGeometry.Select(item => item.Bounds))
                 .Distinct()
-                .ToArray()
-            : [];
+                .ToArray(),
+            LayoutV2Kind.FixedLabel => definition.ProtectedGeometry
+                .Select(item => item.Bounds)
+                .Distinct()
+                .ToArray(),
+            _ => []
+        };
         string groupId = kind == LayoutV2Kind.FixedLabel
             ? target.Manifest.RecordId
             : GroupId(text);

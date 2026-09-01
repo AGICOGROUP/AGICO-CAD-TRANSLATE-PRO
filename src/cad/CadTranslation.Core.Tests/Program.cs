@@ -90,6 +90,7 @@ var tests = new (string Name, Action Run)[]
     ,("source_neighbor_slots_are_mutually_exclusive_on_same_row", Tests.SourceNeighborSlotsAreMutuallyExclusiveOnSameRow)
     ,("layout_v2_assigns_every_changed_record_once", Tests.LayoutV2AssignsEveryChangedRecordOnce)
     ,("layout_v2_clamps_narrative_before_right_keepout", Tests.LayoutV2ClampsNarrativeBeforeRightKeepout)
+    ,("layout_v2_clamps_fixed_label_before_upper_keepout", Tests.LayoutV2ClampsFixedLabelBeforeUpperKeepout)
     ,("layout_v2_partitions_fixed_label_peers", Tests.LayoutV2PartitionsFixedLabelPeers)
     ,("layout_v2_keeps_table_text_inside_parent_cell", Tests.LayoutV2KeepsTableTextInsideParentCell)
     ,("layout_v2_runs_one_fit_and_one_audit", Tests.LayoutV2RunsOneFitAndOneAudit)
@@ -151,6 +152,7 @@ var tests = new (string Name, Action Run)[]
     ,("narrative_panel_planner_uses_second_pass_to_add_a_fourth_column", Tests.NarrativePanelPlannerUsesSecondPassToAddAFourthColumn)
     ,("authoritative_note_selector_splits_neighboring_prose_columns", Tests.AuthoritativeNoteSelectorSplitsNeighboringProseColumns)
     ,("authoritative_note_selector_excludes_short_diagram_labels", Tests.AuthoritativeNoteSelectorExcludesShortDiagramLabels)
+    ,("authoritative_note_selector_excludes_formatted_short_table_labels", Tests.AuthoritativeNoteSelectorExcludesFormattedShortTableLabels)
     ,("authoritative_note_selector_preserves_distant_sheet_panels", Tests.AuthoritativeNoteSelectorPreservesDistantSheetPanels)
 };
 
@@ -209,6 +211,37 @@ internal static class Tests
         AssertEx.SequenceEqual(
             ["note-1", "note-2", "note-3", "note-4"],
             groups[0].MemberIds.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    // Break caught: MText formatting codes make short equipment-table labels
+    // look like long prose and collapse a 13-row, two-column legend into one note.
+    public static void AuthoritativeNoteSelectorExcludesFormattedShortTableLabels()
+    {
+        var samples = new List<FragmentedNarrativeSample>();
+        string[] equipmentNames =
+        [
+            "压缩空气（客户自备）", "电气控制系统", "包装除尘器", "小包机", "吨包机",
+            "吨包/小包仓", "库底硫化散装系统", "罐车仓", "罗茨风机输送系统",
+            "螺旋输送机", "主风机", "脉冲收尘器", "设备名称"
+        ];
+        for (int row = 0; row < equipmentNames.Length; row++)
+        {
+            samples.Add(new FragmentedNarrativeSample(
+                $"item-{row}",
+                new Rect2(0, 120 - row * 9, 8, 127 - row * 9),
+                $@"\T1.001;{25 - row}",
+                true));
+            samples.Add(new FragmentedNarrativeSample(
+                $"name-{row}",
+                new Rect2(12, 120 - row * 9, 72, 127 - row * 9),
+                $@"\T1.001;{equipmentNames[row]}",
+                true));
+        }
+
+        NarrativeOccupancyGroup[] groups =
+            AuthoritativeNarrativeSelector.SelectPanelGroups(samples, 8);
+
+        AssertEx.Equal(0, groups.Length);
     }
 
     public static void AuthoritativeNoteSelectorPreservesDistantSheetPanels()
@@ -2678,6 +2711,24 @@ internal static class Tests
         AssertEx.Equal(76d, decision.AllowedBounds.Right);
         AssertEx.True(decision.ForceWrap);
         AssertEx.False(decision.ManualReview);
+    }
+
+    public static void LayoutV2ClampsFixedLabelBeforeUpperKeepout()
+    {
+        LayoutV2Decision decision = LayoutV2Planner.Plan(
+        [
+            new LayoutV2Input(
+                "label",
+                "label",
+                LayoutV2Kind.FixedLabel,
+                new Rect2(10, 0, 20, 5),
+                new Rect2(0, -20, 40, 30),
+                2,
+                [new Rect2(5, 10, 25, 20)])
+        ]).Single();
+
+        AssertEx.True(decision.AllowedBounds.Contains(new Rect2(10, 0, 20, 5)));
+        AssertEx.True(decision.AllowedBounds.Top < 10);
     }
 
     public static void LayoutV2PartitionsFixedLabelPeers()

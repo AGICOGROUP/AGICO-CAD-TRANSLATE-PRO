@@ -101,6 +101,10 @@ public static class LayoutV2Planner
                 {
                     allowed = ClampNarrative(allowed, input, tolerance);
                 }
+                else if (input.Kind == LayoutV2Kind.FixedLabel)
+                {
+                    allowed = ClampFixedLabel(allowed, input, tolerance);
+                }
 
                 allowedById.Add(input.RecordId, allowed);
             }
@@ -173,6 +177,60 @@ public static class LayoutV2Planner
 
     private static bool VerticallyRelevant(Rect2 source, Rect2 keepout, double tolerance) =>
         Math.Min(source.Top, keepout.Top) - Math.Max(source.Bottom, keepout.Bottom) > tolerance;
+
+    private static Rect2 ClampFixedLabel(
+        Rect2 allowed,
+        LayoutV2Input input,
+        double tolerance)
+    {
+        double gutter = Math.Max(input.OriginalTextHeight * 0.25, tolerance);
+        double left = allowed.Left;
+        double bottom = allowed.Bottom;
+        double right = allowed.Right;
+        double top = allowed.Top;
+        foreach (Rect2 keepout in input.HardKeepouts)
+        {
+            bool overlapsSource =
+                Math.Min(input.SourceBounds.Right, keepout.Right) -
+                Math.Max(input.SourceBounds.Left, keepout.Left) > tolerance &&
+                Math.Min(input.SourceBounds.Top, keepout.Top) -
+                Math.Max(input.SourceBounds.Bottom, keepout.Bottom) > tolerance;
+            if (overlapsSource)
+            {
+                continue;
+            }
+
+            bool horizontalOverlap =
+                Math.Min(input.SourceBounds.Right, keepout.Right) -
+                Math.Max(input.SourceBounds.Left, keepout.Left) > tolerance;
+            if (horizontalOverlap && keepout.Bottom >= input.SourceBounds.Top - tolerance)
+            {
+                top = Math.Min(top, keepout.Bottom - gutter);
+            }
+            else if (horizontalOverlap && keepout.Top <= input.SourceBounds.Bottom + tolerance)
+            {
+                bottom = Math.Max(bottom, keepout.Top + gutter);
+            }
+
+            bool verticalOverlap =
+                Math.Min(input.SourceBounds.Top, keepout.Top) -
+                Math.Max(input.SourceBounds.Bottom, keepout.Bottom) > tolerance;
+            if (verticalOverlap && keepout.Left >= input.SourceBounds.Right - tolerance)
+            {
+                right = Math.Min(right, keepout.Left - gutter);
+            }
+            else if (verticalOverlap && keepout.Right <= input.SourceBounds.Left + tolerance)
+            {
+                left = Math.Max(left, keepout.Right + gutter);
+            }
+        }
+
+        return new Rect2(
+            Math.Min(left, input.SourceBounds.Left),
+            Math.Min(bottom, input.SourceBounds.Bottom),
+            Math.Max(right, input.SourceBounds.Right),
+            Math.Max(top, input.SourceBounds.Top));
+    }
 
     private static Rect2 IntersectOrSource(
         Rect2 first,

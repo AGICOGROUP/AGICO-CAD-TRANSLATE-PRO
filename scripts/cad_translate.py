@@ -8,6 +8,7 @@ from pathlib import Path
 AUTOCAD_2025 = Path(r"C:\Program Files\Autodesk\AutoCAD 2025")
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
+AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
 PLUGIN_FILES = ("CadTranslation.AutoCAD2025.dll", "CadTranslation.Core.dll", "CadTranslation.Contracts.dll")
 TARGET_LANGUAGE_RESIDUE = re.compile(
     r"[\u2e80-\u2fff\u3000-\u303f\u31c0-\u31ef\u3400-\u4dbf"
@@ -19,6 +20,7 @@ DIAGNOSTIC_EXAMPLE_LIMIT = 20
 SUPPORTED_SOURCE_LANGUAGES = {"zh", "zh-cn", "zh-hans"}
 SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb"}
 DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800}
+OUTPUT_MODES = {"english", "bilingual"}
 
 def absolute(value: str | Path) -> Path:
     return Path(value).expanduser().resolve()
@@ -30,16 +32,30 @@ def sha256(path: Path) -> str:
             digest.update(block)
     return digest.hexdigest()
 
-def profile() -> dict[str, object]:
-    report: dict[str, object] = {"initialized": False, "name": None, "writable": False}
+def autocad_release(autocad_root: Path) -> str:
+    match = re.search(r"AutoCAD\s+(\d{4})", str(autocad_root), re.IGNORECASE)
+    year = int(match.group(1)) if match else 2025
+    releases = {2025: "R25.0", 2027: "R26.0"}
+    if year not in releases:
+        raise ValueError(f"Unsupported AutoCAD release year: {year}")
+    return releases[year]
+
+def runtime_plugin_dir(autocad_root: Path) -> Path:
+    return AUTOCAD_2027_PLUGIN_DIR if autocad_release(autocad_root) == "R26.0" else PLUGIN_DIR
+
+def profile(release: str = "R25.0") -> dict[str, object]:
+    if release not in {"R25.0", "R26.0"}:
+        raise ValueError(f"Unsupported AutoCAD registry release: {release}")
+    report: dict[str, object] = {"initialized": False, "name": None, "writable": False, "release": release}
     if os.name != "nt":
         report["detail"] = "Windows registry unavailable"
         return report
     try:
         import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Autodesk\AutoCAD\R25.0") as release:
-            product, _ = winreg.QueryValueEx(release, "CurVer")
-        product_path = rf"Software\Autodesk\AutoCAD\R25.0\{product}"
+        release_path = rf"Software\Autodesk\AutoCAD\{release}"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, release_path) as release_key:
+            product, _ = winreg.QueryValueEx(release_key, "CurVer")
+        product_path = rf"{release_path}\{product}"
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, product_path + r"\Profiles") as profiles:
             try:
                 name, _ = winreg.QueryValueEx(profiles, "")
@@ -64,12 +80,13 @@ def doctor(source: Path | None = None, autocad_root: Path = AUTOCAD_2025) -> dic
     if source is not None:
         source = absolute(source)
         source_report = {"path": str(source), "exists": source.is_file(), "extensionSupported": source.suffix.lower() in (".dwg", ".dxf")}
-    files = {name: (PLUGIN_DIR / name).is_file() for name in PLUGIN_FILES}
-    preflight = profile()
+    plugin_dir = runtime_plugin_dir(root)
+    files = {name: (plugin_dir / name).is_file() for name in PLUGIN_FILES}
+    preflight = profile(autocad_release(root))
     ready = (root / "accoreconsole.exe").is_file() and all(files.values()) and bool(preflight["initialized"])
     if source is not None:
         ready = ready and bool(source_report["exists"]) and bool(source_report["extensionSupported"])
-    return {"status": "ready" if ready else "blocked", "autocad": {"root": str(root), "coreConsoleExists": (root / "accoreconsole.exe").is_file()}, "plugin": {"files": files}, "profile": preflight, "source": source_report}
+    return {"status": "ready" if ready else "blocked", "autocad": {"root": str(root), "coreConsoleExists": (root / "accoreconsole.exe").is_file()}, "plugin": {"directory": str(plugin_dir), "files": files}, "profile": preflight, "source": source_report}
 
 def assert_source(source: Path) -> None:
     if not source.is_file() or source.suffix.lower() not in (".dwg", ".dxf"):
@@ -84,7 +101,23 @@ def validate_language_direction(source_language: str, target_language: str) -> N
             "(source: zh/zh-CN/zh-Hans; target: en/en-US/en-GB)."
         )
 
-def prepare_export_job(source: Path, job: Path, source_language: str, target_language: str) -> dict[str, object]:
+def write_output_mode(job: Path, mode: str) -> Path:
+    if mode not in OUTPUT_MODES:
+        raise ValueError(f"Unsupported output mode: {mode}")
+    target = absolute(job) / "config" / "output-mode.json"
+    target.write_text(json.dumps({"schemaVersion": "1.0", "outputMode": mode}, indent=2), encoding="utf-8")
+    return target
+
+def read_output_mode(job: Path) -> str:
+    target = absolute(job) / "config" / "output-mode.json"
+    if not target.is_file():
+        return "english"
+    mode = str(json.loads(target.read_text(encoding="utf-8")).get("outputMode", ""))
+    if mode not in OUTPUT_MODES:
+        raise ValueError(f"Unsupported output mode: {mode}")
+    return mode
+
+def prepare_export_job(source: Path, job: Path, source_language: str, target_language: str, output_mode: str = "english") -> dict[str, object]:
     source, job = absolute(source), absolute(job)
     assert_source(source)
     validate_language_direction(source_language, target_language)
@@ -96,6 +129,7 @@ def prepare_export_job(source: Path, job: Path, source_language: str, target_lan
     shutil.copy2(source, working)
     config: dict[str, object] = {"schemaVersion": "1.0", "jobId": job.name, "operation": "export", "sourcePath": str(source), "workingPath": str(working), "sourceSha256": sha256(source), "manifestPath": str(job / "exchange" / "manifest.input.jsonl"), "translationPath": None, "outputPath": str(job / "results" / f"candidate{source.suffix.lower()}"), "resultPath": str(job / "artifacts" / "export-result.json"), "artifactDirectory": str(job / "artifacts"), "sourceLanguage": source_language, "targetLanguage": target_language}
     (job / "config" / "export-job.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_output_mode(job, output_mode)
     return config
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
@@ -226,6 +260,7 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
             manifest_path,
             temporary,
             job / "artifacts" / "assembled-translation-check.json",
+            read_output_mode(job),
         )
         if report["status"] != "passed":
             raise ValueError(
@@ -284,8 +319,10 @@ def validate_complete_translations(manifest_path: Path, translations_path: Path)
             if actual != markers: raise ValueError(f"protected marker mismatch: {translation['recordId']}")
     return len(expected)
 
-def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None) -> dict[str, object]:
+def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None, output_mode: str = "english") -> dict[str, object]:
     """Reject incomplete language conversion before AutoCAD is started."""
+    if output_mode not in OUTPUT_MODES:
+        raise ValueError(f"Unsupported output mode: {output_mode}")
     record_count = validate_complete_translations(manifest_path, translations_path)
     manifest = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     translations = [json.loads(line) for line in translations_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
@@ -293,19 +330,30 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
     translated_source_records = 0
     residual_ids: list[str] = []
     invalid_ids: list[str] = []
+    bilingual_ids: list[str] = []
+    missing_chinese_ids: list[str] = []
+    missing_english_ids: list[str] = []
     for translation in translations:
         record_id = str(translation["recordId"])
         source_text = str(manifest_by_id[record_id].get("plainText", ""))
         translated_text = str(translation["translatedText"])
         if TARGET_LANGUAGE_RESIDUE.search(source_text):
             translated_source_records += 1
-        if TARGET_LANGUAGE_RESIDUE.search(translated_text):
+        source_has_chinese = bool(TARGET_LANGUAGE_RESIDUE.search(source_text))
+        if output_mode == "english" and TARGET_LANGUAGE_RESIDUE.search(translated_text):
             residual_ids.append(record_id)
+        if output_mode == "bilingual" and source_has_chinese:
+            bilingual_ids.append(record_id)
+            if source_text not in translated_text:
+                missing_chinese_ids.append(record_id)
+            if not re.search(r"[A-Za-z]{2,}", translated_text):
+                missing_english_ids.append(record_id)
         if (source_text and not translated_text.strip()) or "\ufffd" in translated_text:
             invalid_ids.append(record_id)
-    status = "passed" if not residual_ids and not invalid_ids else "failed"
+    status = "passed" if not residual_ids and not invalid_ids and not missing_chinese_ids and not missing_english_ids else "failed"
     report: dict[str, object] = {
         "schemaVersion": "1.0",
+        "outputMode": output_mode,
         "status": status,
         "records": record_count,
         "translatedSourceRecords": translated_source_records,
@@ -313,6 +361,9 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
         "chineseResidualRecordIds": residual_ids,
         "invalidTranslationCount": len(invalid_ids),
         "invalidTranslationRecordIds": invalid_ids,
+        "bilingualRecordCount": len(bilingual_ids),
+        "missingChineseRecordIds": missing_chinese_ids,
+        "missingEnglishRecordIds": missing_english_ids,
     }
     if report_path is not None:
         report_path = absolute(report_path)
@@ -320,7 +371,9 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
 
-def check_exported_candidate_language(manifest_path: Path, report_path: Path) -> dict[str, object]:
+def check_exported_candidate_language(manifest_path: Path, report_path: Path, output_mode: str = "english") -> dict[str, object]:
+    if output_mode not in OUTPUT_MODES:
+        raise ValueError(f"Unsupported output mode: {output_mode}")
     records = [
         json.loads(line)
         for line in manifest_path.read_text(encoding="utf-8-sig").splitlines()
@@ -336,14 +389,24 @@ def check_exported_candidate_language(manifest_path: Path, report_path: Path) ->
         for record in records
         if TARGET_LANGUAGE_RESIDUE.search(str(record.get("rawText", "")))
     ]
+    missing_english = [
+        str(record.get("recordId", ""))
+        for record in records
+        if TARGET_LANGUAGE_RESIDUE.search(str(record.get("plainText", "")))
+        and not re.search(r"[A-Za-z]{2,}", str(record.get("plainText", "")))
+    ] if output_mode == "bilingual" else []
+    passed = not missing_english if output_mode == "bilingual" else not plain_residuals and not raw_residuals
     report: dict[str, object] = {
         "schemaVersion": "1.0",
-        "status": "passed" if not plain_residuals and not raw_residuals else "failed",
+        "outputMode": output_mode,
+        "status": "passed" if passed else "failed",
         "records": len(records),
         "plainTextChineseResidualCount": len(plain_residuals),
         "plainTextChineseResidualRecordIds": plain_residuals,
         "rawTextChineseResidualCount": len(raw_residuals),
         "rawTextChineseResidualRecordIds": raw_residuals,
+        "missingEnglishRecordCount": len(missing_english),
+        "missingEnglishRecordIds": missing_english,
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     return report
@@ -452,6 +515,7 @@ def summarize_audit(job: Path) -> dict[str, object]:
         "language": {
             "present": language_path.is_file(),
             "status": language.get("status"),
+            "outputMode": language.get("outputMode", "english"),
             "chineseResidualCount": int(
                 language.get(
                     "chineseResidualCount",
@@ -478,7 +542,9 @@ def summarize_audit(job: Path) -> dict[str, object]:
     if not language_path.is_file(): gate_errors.append("language_report_missing")
     if summary["layout"]["missingBlockInstanceCount"]: gate_errors.append("layout_instance_audit_incomplete")
     if overflow_count: gate_errors.append("segment_overflow")
-    if summary["language"]["status"] != "passed" or summary["language"]["chineseResidualCount"]:
+    if summary["language"]["status"] != "passed" or (
+        summary["language"]["outputMode"] == "english" and summary["language"]["chineseResidualCount"]
+    ):
         gate_errors.append("target_language_residue")
     if summary["language"]["invalidTranslationCount"]: gate_errors.append("invalid_translation")
     summary["status"] = "passed" if not gate_errors else "failed"
@@ -556,9 +622,9 @@ def run_once(
     autocad_root: Path,
     timeout_seconds: int | None = None,
 ) -> int:
-    plugin = (PLUGIN_DIR / PLUGIN_FILES[0]).resolve(strict=True)
+    plugin = (runtime_plugin_dir(autocad_root) / PLUGIN_FILES[0]).resolve(strict=True)
     if any(ch in str(plugin) + str(working) for ch in ('\r', '\n', '"')): raise ValueError("Unsafe AutoCAD path")
-    profile_name = str(profile()["name"])
+    profile_name = str(profile(autocad_release(autocad_root))["name"])
     script = config_path.parent / f"{operation}.scr"
     script.write_text(f'_.NETLOAD\n"{plugin}"\nCADTRANS_{operation.upper()}\n_.QUIT\n', encoding="utf-8", newline="\n")
     command = [str(absolute(autocad_root) / "accoreconsole.exe"), "/product", "ACAD", "/p", profile_name, "/nologo", "/nohardware", "/i", str(working), "/s", str(script)]
@@ -642,11 +708,12 @@ def run_export(
     target_language: str,
     autocad_root: Path,
     timeout_seconds: int | None = None,
+    output_mode: str = "english",
 ) -> int:
     source = absolute(source)
     assert_source(source)
     require_ready(source, autocad_root)
-    config = prepare_export_job(source, job, source_language, target_language)
+    config = prepare_export_job(source, job, source_language, target_language, output_mode)
     result = _run_stage(
         "export",
         absolute(job) / "config" / "export-job.json",
@@ -665,11 +732,12 @@ def run_import(
     timeout_seconds: int | None = None,
 ) -> int:
     job, translations = absolute(job), absolute(translations)
+    output_mode = read_output_mode(job)
     config_path = job / "config" / "export-job.json"; config = json.loads(config_path.read_text(encoding="utf-8"))
     source, working, manifest = Path(config["sourcePath"]), Path(config["workingPath"]), Path(config["manifestPath"])
     assert_source(source)
     verify_export_seal(job, config)
-    report = check_translations(manifest, translations, job / "artifacts" / "preimport-language-check.json")
+    report = check_translations(manifest, translations, job / "artifacts" / "preimport-language-check.json", output_mode)
     if report["status"] != "passed":
         raise ValueError(
             "translation quality gate failed: "
@@ -739,12 +807,14 @@ def run_import(
         str(config.get("targetLanguage", "en")),
         autocad_root,
         timeout_seconds,
+        output_mode,
     )
     if final_audit_result != 0:
         return final_audit_result
     final_language_report = check_exported_candidate_language(
         final_audit_job / "exchange" / "manifest.input.jsonl",
         job / "artifacts" / "postcomposition-language-check.json",
+        output_mode,
     )
     if final_language_report["status"] != "passed":
         raise ValueError(
@@ -782,7 +852,7 @@ def _bounded_cli_output(report: dict[str, object]) -> dict[str, object]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--autocad-root", type=Path, default=AUTOCAD_2025); sub = parser.add_subparsers(dest="command", required=True)
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
-    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int)
+    export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="english")
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
     imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True); imported.add_argument("--timeout-seconds", type=int)
@@ -790,7 +860,7 @@ def main(argv: list[str] | None = None) -> int:
     audited = sub.add_parser("audit-summary"); audited.add_argument("--job", type=Path, required=True)
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
-    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}
+    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0
     elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}

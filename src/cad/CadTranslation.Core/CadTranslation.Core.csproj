@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'==''">net8.0</AutoCADTargetFramework>
+    <TargetFramework>$(AutoCADTargetFramework)</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\CadTranslation.Contracts\CadTranslation.Contracts.csproj" />

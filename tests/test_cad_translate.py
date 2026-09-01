@@ -282,6 +282,8 @@ class CadTranslateDryTests(unittest.TestCase):
     def test_packaged_plugin_is_present_and_matches_release_build_when_available(self):
         skill_root = Path(__file__).resolve().parents[1]
         source_root = skill_root / "src" / "cad"
+        autocad_root = Path(r"D:\AutoCAD 2027\AutoCAD 2027")
+        framework = "net10.0-windows" if autocad_root.is_dir() else "net8.0-windows"
         self.assertTrue((source_root / "CadTranslation.AutoCAD2025" / "Importer.cs").is_file())
         self.assertTrue((source_root / "CadTranslation.Core" / "TranslationValidator.cs").is_file())
         release_root = (
@@ -290,20 +292,22 @@ class CadTranslateDryTests(unittest.TestCase):
             / "bin"
             / "x64"
             / "Release"
-            / "net8.0-windows"
+            / framework
         )
         if not release_root.is_dir():
+            command = [
+                "dotnet", "build",
+                str(source_root / "CadTranslation.AutoCAD2025" / "CadTranslation.AutoCAD2025.csproj"),
+                "-c", "Release", "-p:Platform=x64",
+            ]
+            if autocad_root.is_dir():
+                command.extend(["-p:AutoCADRelease=2027", f"-p:AutoCADDir={autocad_root}"])
             completed = subprocess.run(
-                [
-                    "dotnet",
-                    "build",
-                    str(source_root / "CadTranslation.sln"),
-                    "-c",
-                    "Release",
-                    "-p:Platform=x64",
-                ],
+                command,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
@@ -425,6 +429,49 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["chineseResidualCount"], 0)
             self.assertEqual(report["translatedSourceRecords"], 1)
+
+    def test_bilingual_translation_gate_requires_chinese_and_english(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.jsonl"
+            manifest.write_text(
+                json.dumps({
+                    "recordId": "a", "inputHash": "h", "plainText": "基础详图",
+                    "protectedTokens": [],
+                }, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            translations = root / "translations.jsonl"
+
+            def write(text):
+                translations.write_text(json.dumps({
+                    "schemaVersion": "1.0", "recordId": "a", "inputHash": "h",
+                    "translatedText": text, "reviewStatus": "approved", "reason": "test",
+                }, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            write(r"基础详图\PFoundation Detail")
+            passed = cad_translate.check_translations(manifest, translations, output_mode="bilingual")
+            self.assertEqual("passed", passed["status"])
+            self.assertEqual(1, passed["bilingualRecordCount"])
+
+            write("基础详图")
+            failed = cad_translate.check_translations(manifest, translations, output_mode="bilingual")
+            self.assertEqual("failed", failed["status"])
+            self.assertEqual(["a"], failed["missingEnglishRecordIds"])
+
+    def test_bilingual_mode_is_stored_outside_strict_autocad_job_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"drawing")
+            job = root / "job"
+
+            config = cad_translate.prepare_export_job(
+                source, job, "zh-CN", "en", output_mode="bilingual"
+            )
+
+            self.assertNotIn("outputMode", config)
+            self.assertEqual("bilingual", cad_translate.read_output_mode(job))
+            self.assertTrue((job / "config" / "output-mode.json").is_file())
 
     def test_check_translations_command_writes_failure_report_and_nonzero_exit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -646,6 +693,59 @@ class CadTranslateDryTests(unittest.TestCase):
 
         self.assertEqual("CurrentProfile", report["name"])
         self.assertEqual("current", report["selection"])
+
+    def test_profile_reads_autocad_2027_registry_release(self):
+        opened = []
+
+        class Key:
+            def __init__(self, path): self.path = path
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+
+        def open_key(_root, path):
+            opened.append(path)
+            return Key(path)
+
+        def query_value(key, name):
+            if name == "CurVer":
+                return "ACAD-A101:804", 1
+            if name == "" and key.path.endswith("\\Profiles"):
+                return "<<未命名配置>>", 1
+            raise OSError("value not found")
+
+        fake = types.SimpleNamespace(
+            HKEY_CURRENT_USER=object(),
+            OpenKey=open_key,
+            QueryValueEx=query_value,
+            EnumKey=lambda _key, _index: "FirstProfile",
+        )
+        with mock.patch.dict("sys.modules", {"winreg": fake}):
+            report = cad_translate.profile("R26.0")
+
+        self.assertEqual("<<未命名配置>>", report["name"])
+        self.assertEqual("R26.0", report["release"])
+        self.assertEqual(
+            [
+                r"Software\Autodesk\AutoCAD\R26.0",
+                r"Software\Autodesk\AutoCAD\R26.0\ACAD-A101:804\Profiles",
+            ],
+            opened,
+        )
+
+    def test_autocad_release_maps_2027_install_root(self):
+        self.assertEqual(
+            "R26.0",
+            cad_translate.autocad_release(Path(r"D:\AutoCAD 2027\AutoCAD 2027")),
+        )
+
+    def test_autocad_2027_uses_trusted_application_plugins_directory(self):
+        directory = cad_translate.runtime_plugin_dir(
+            Path(r"D:\AutoCAD 2027\AutoCAD 2027")
+        )
+        self.assertEqual(
+            Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows"),
+            directory,
+        )
 
     def test_doctor_is_read_only_and_reports_missing_components(self):
         with tempfile.TemporaryDirectory() as directory:
