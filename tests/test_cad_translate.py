@@ -481,6 +481,27 @@ class CadTranslateDryTests(unittest.TestCase):
 
             self.assertEqual("replace", cad_translate.read_output_mode(job))
 
+    def test_output_modes_dispatch_to_distinct_pipeline_implementations(self):
+        replace = cad_translate.get_pipeline("replace")
+        bilingual = cad_translate.get_pipeline("bilingual")
+
+        self.assertEqual("ReplacePipeline", type(replace).__name__)
+        self.assertEqual("BilingualPipeline", type(bilingual).__name__)
+        self.assertIsNot(type(replace), type(bilingual))
+
+    def test_translation_gate_calls_only_selected_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest, translations = self.write_translation_fixture(root, "Name", "Equipment Name")
+            replace = cad_translate.get_pipeline("replace")
+            bilingual = cad_translate.get_pipeline("bilingual")
+            with mock.patch.object(replace, "check_translations", wraps=replace.check_translations) as replace_gate, \
+                 mock.patch.object(bilingual, "check_translations", wraps=bilingual.check_translations) as bilingual_gate, \
+                 mock.patch.object(cad_translate, "validate_complete_translations", return_value=1):
+                cad_translate.check_translations(manifest, translations, output_mode="replace")
+                replace_gate.assert_called_once()
+                bilingual_gate.assert_not_called()
+
     def test_bilingual_mode_is_stored_in_strict_autocad_job_config(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

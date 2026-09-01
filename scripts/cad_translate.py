@@ -7,6 +7,9 @@ from pathlib import Path
 
 AUTOCAD_2025 = Path(r"C:\Program Files\Autodesk\AutoCAD 2025")
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+if str(SKILL_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(SKILL_ROOT / "scripts"))
+from pipelines import get_pipeline
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
 PLUGIN_FILES = ("CadTranslation.AutoCAD2025.dll", "CadTranslation.Core.dll", "CadTranslation.Contracts.dll")
@@ -327,6 +330,10 @@ def validate_complete_translations(manifest_path: Path, translations_path: Path)
 def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None, output_mode: str = "replace") -> dict[str, object]:
     """Reject incomplete language conversion before AutoCAD is started."""
     output_mode = normalize_output_mode(output_mode)
+    return get_pipeline(output_mode).check_translations(
+        manifest_path, translations_path, report_path, validate_complete_translations
+    )
+    # Legacy implementation retained temporarily below for blame history; unreachable.
     record_count = validate_complete_translations(manifest_path, translations_path)
     manifest = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
     translations = [json.loads(line) for line in translations_path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
@@ -377,6 +384,8 @@ def check_translations(manifest_path: Path, translations_path: Path, report_path
 
 def check_exported_candidate_language(manifest_path: Path, report_path: Path, output_mode: str = "replace") -> dict[str, object]:
     output_mode = normalize_output_mode(output_mode)
+    return get_pipeline(output_mode).check_candidate(manifest_path, report_path)
+    # Legacy implementation retained temporarily below for blame history; unreachable.
     records = [
         json.loads(line)
         for line in manifest_path.read_text(encoding="utf-8-sig").splitlines()
