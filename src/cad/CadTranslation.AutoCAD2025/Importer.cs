@@ -14,6 +14,9 @@ internal static class Importer
 
     internal static int Run(JobContext context)
     {
+        bool bilingualMode = string.Equals(context.Config.OutputMode, OutputModePolicy.Bilingual, StringComparison.Ordinal);
+        string pipelineVersion = bilingualMode ? BilingualImportPipeline.Version : ReplaceImportPipeline.Version;
+        string artifactPrefix = bilingualMode ? BilingualImportGate.ArtifactPrefix : ReplaceImportGate.ArtifactPrefix;
         context.VerifySourceAndWorkingHashes();
         if (string.IsNullOrWhiteSpace(context.Config.TranslationPath))
             throw new CommandProtocolException("missing_translation", "translationPath is required for import.");
@@ -54,7 +57,9 @@ internal static class Importer
                             sideDatabase,
                             transaction,
                             preliminaryInputs);
-                        bilingualSelection = SelectBilingualFixedLabels(preliminaryBaseline, resolved);
+                        bilingualSelection = bilingualMode
+                            ? SelectBilingualFixedLabels(preliminaryBaseline, resolved)
+                            : new BilingualFixedLabelSelection([], new Dictionary<string, string>());
                         var suppressed = bilingualSelection.SuppressChineseIds.ToHashSet(StringComparer.Ordinal);
                         resolved = resolved.Select(write =>
                             bilingualSelection.MixedObjectEnglishTextById.TryGetValue(
@@ -90,7 +95,9 @@ internal static class Importer
                             DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false);
                             write.Adapter.Write(value, write.Manifest.Slot, write.RestoredText);
                         }
-                        layoutResult = LayoutOptimizerV2.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline);
+                        layoutResult = bilingualMode
+                            ? BilingualImportPipeline.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline)
+                            : ReplaceImportPipeline.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline);
                         transaction.Commit();
                     }
                     SaveTemporaryOutput(sideDatabase, temporaryOutput, Path.GetExtension(context.Config.WorkingPath));
@@ -107,30 +114,27 @@ internal static class Importer
                 layoutBaseline,
                 layoutResult,
                 passIndex: 1);
-            if (layoutAudit.MissingBlockInstancePaths.Count > 0)
-                throw new CommandProtocolException("layout_instance_audit_incomplete", "Not every block instance received a layout audit.");
-            AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "layout-adjustments.json"),
+            AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, $"{artifactPrefix}-layout-adjustments.json"),
                 JsonSerializer.Serialize(layoutResult, JsonDefaults.Options));
-            AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "layout-audit.json"),
+            AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, $"{artifactPrefix}-layout-audit.json"),
                 JsonSerializer.Serialize(layoutAudit, JsonDefaults.Options));
-            if (layoutResult.UncoveredRecordIds.Count > 0)
-                throw new CommandProtocolException(
-                    "layout_coverage_incomplete",
-                    $"{layoutResult.UncoveredRecordIds.Count} changed records have no layout decision.");
             if (layoutAudit.ManualReview.Count > 0)
             {
                 File.Copy(
                     temporaryOutput,
                     Path.Combine(context.Config.ArtifactDirectory, "review-candidate.dwg"),
                     overwrite: true);
-                throw new CommandProtocolException(
-                    "layout_high_risk",
-                    $"Candidate has {layoutAudit.ManualReview.Count} unresolved high layout risks.");
             }
+            if (bilingualMode)
+                BilingualImportGate.EnsurePassed(layoutResult, layoutAudit);
+            else
+                ReplaceImportGate.EnsurePassed(layoutResult, layoutAudit);
             File.Move(temporaryOutput, context.Config.OutputPath, overwrite: true);
             AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "import-summary.json"), JsonSerializer.Serialize(new
             {
                 processedRecords = resolved.Length,
+                outputMode = context.Config.OutputMode,
+                pipelineVersion,
                 changedRecordCount = changed.Length,
                 changedRecordIds = changed.Select(write => write.Manifest.RecordId).OrderBy(id => id, StringComparer.Ordinal).ToArray(),
                 manualReviewRecordIds = translations.Where(record => record.ReviewStatus == "manual-review").Select(record => record.RecordId).OrderBy(id => id, StringComparer.Ordinal).ToArray(),

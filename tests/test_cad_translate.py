@@ -140,7 +140,7 @@ class CadTranslateDryTests(unittest.TestCase):
             job = Path(directory)
             artifacts = job / "artifacts"
             artifacts.mkdir(parents=True)
-            (artifacts / "layout-audit.json").write_text(
+            (artifacts / "replace-layout-audit.json").write_text(
                 json.dumps(
                     {
                         "riskCounts": {"low": 5, "medium": 3, "high": 2},
@@ -240,7 +240,12 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertIn("one fit and one audit", skill_text)
         self.assertIn("wrap, compress width, then reduce height", skill_text)
         self.assertLess(len(skill_text.split()), 450)
-        self.assertIn("LayoutOptimizerV2.Optimize", importer)
+        bilingual_pipeline = (skill_root / "src" / "cad" / "CadTranslation.AutoCAD2025" / "BilingualImportPipeline.cs").read_text(encoding="utf-8")
+        replace_pipeline = (skill_root / "src" / "cad" / "CadTranslation.AutoCAD2025" / "ReplaceImportPipeline.cs").read_text(encoding="utf-8")
+        self.assertIn("BilingualImportPipeline.Optimize", importer)
+        self.assertIn("ReplaceImportPipeline.Optimize", importer)
+        self.assertIn("LayoutOptimizerV2.Optimize", bilingual_pipeline)
+        self.assertIn("LayoutOptimizer.Optimize", replace_pipeline)
         self.assertNotIn("while (layoutAudit.PassIndex", importer)
         self.assertIn(
             "topology[0].Region is null && allowedOverride is null",
@@ -1032,7 +1037,7 @@ class CadTranslateDryTests(unittest.TestCase):
                 if operation == "import":
                     self.assertTrue(Path(stage["translationPath"]).resolve().is_relative_to(job.resolve()))
                     Path(stage["outputPath"]).write_bytes(b"imported")
-                    (job / "artifacts" / "layout-audit.json").write_text(
+                    (job / "artifacts" / "replace-layout-audit.json").write_text(
                         json.dumps({"texts": []}), encoding="utf-8"
                     )
                 elif operation == "compose":
@@ -1091,7 +1096,7 @@ class CadTranslateDryTests(unittest.TestCase):
                 stage = json.loads(config_path.read_text(encoding="utf-8"))
                 if operation == "import":
                     Path(stage["outputPath"]).write_bytes(b"imported")
-                    (job / "artifacts" / "layout-audit.json").write_text(json.dumps({"texts": []}), encoding="utf-8")
+                    (job / "artifacts" / "replace-layout-audit.json").write_text(json.dumps({"texts": []}), encoding="utf-8")
                 elif operation == "compose":
                     Path(stage["outputPath"]).write_bytes(b"overflowed")
                     (job / "artifacts" / "logical-flow-report.json").write_text(

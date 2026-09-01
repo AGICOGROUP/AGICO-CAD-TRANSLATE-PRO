@@ -1,35 +1,45 @@
 ---
 name: translate-cad-files
-description: Use when translating Chinese text to English in AutoCAD 2025 DWG drawings, or DXF drawings that can be manually verified, including technical notes, labels, title blocks, tables, diagrams, and bilingual cleanup.
+description: Use when translating text in AutoCAD 2027 DWG drawings, including single-language replacement and bilingual preserve-and-add output for technical notes, labels, title blocks, tables, and diagrams.
 ---
 
 # Translate CAD Files
 
-Use the bundled runner. Never overwrite the source. This v2 release uses one source-derived allowed region for each changed label or narrative group, followed by one fit and one audit.
+Use the bundled runner and never overwrite the source. Select one output pipeline from the user's request before export. Do not switch pipelines or reuse another pipeline's gate artifacts.
+
+## Select the pipeline
+
+- Use `replace` by default for single-language output: Chinese-to-English, English-to-Chinese, or another registered direction. It replaces source-language text and uses the stable replace layout and replace gates.
+- Use `bilingual` only when the user requests bilingual output. It preserves source text, skips valid existing translations, adds missing target text beside or below the source, and uses layout V2 plus bilingual gates.
+- Legacy `english` job metadata maps to `replace`; never write `english` for a new job.
+
+Only `zh-CN -> en` is currently verified end to end. Do not advertise another direction as verified without its registered language policy and fixture.
 
 ## Workflow
 
-1. Run `scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2025 was verified in this task.
-2. Run `scripts/run.ps1 export --source <drawing> --job <new-job-dir>`.
+1. Run `scripts/run.ps1 doctor --source <drawing>` unless AutoCAD 2027 was verified in this task.
+2. Run `scripts/run.ps1 export --source <drawing> --job <new-job-dir> --output-mode <replace|bilingual>`.
 3. Run `scripts/run.ps1 prepare-translations --job <job-dir> --max-source-chars 6000`.
-4. Read one `exchange/translation-worklist/part-*.jsonl` at a time. Write matching files under `exchange/translated-batches/` containing only `recordId` and `translatedText`. Preserve protected markers exactly.
-5. Run `scripts/run.ps1 assemble-translations --job <job-dir> --translated <job-dir>/exchange/translated-batches`.
-6. Run `scripts/run.ps1 import --job <job-dir> --translations <job-dir>/exchange/translations.output.jsonl`. Import performs the pre-import language gate internally and writes `artifacts/postcomposition-language-check.json`. Do not retry automatically or close AutoCAD manually.
-7. Run `scripts/run.ps1 audit-summary --job <job-dir>`. Treat any printable-frame overflow as a hard failure. If `requiresVisualReview` is true, use `references/visual-audit.md` only for changed, composed, or high-risk areas.
-8. Run `scripts/run.ps1 status --job <job-dir>` and deliver only `results/candidate.dwg` or `.dxf`.
+4. Process one worklist part at a time. Preserve protected markers exactly. In `replace`, write target text only. In `bilingual`, retain source text and add the target text unless an equivalent target already exists.
+5. Run `assemble-translations`, then import. Import runs only the selected pipeline's translation, composition, layout, and final gates.
+6. Run `scripts/run.ps1 audit-summary --job <job-dir>`. Reject printable-frame overflow, missing layout coverage, wrong language outcome, duplicate bilingual companions, topology failure, or AutoCAD audit failure.
+7. If visual review is required, inspect only changed or high-risk regions using `references/visual-audit.md`.
+8. Deliver only `results/candidate.dwg` or `.dxf` after the selected pipeline passes.
 
-Never open or print the complete manifest, translation output, `layout-audit.json`, or `logical-flow-report.json`.
+Never open or print complete manifests, translations, detailed layout audits, or logical-flow reports.
 
-## Translation contract
+## Independent gates
 
-Use terminology in this order: user-supplied project glossary, `references/cement-industry-glossary.md` for cement drawings, then established engineering usage. Match the longest complete Chinese term. Preserve models, standards, quantities, and markers; insert an ASCII word boundary after restored alphanumeric markers when needed.
+`replace` owns its export, translation, composition, residue, layout, topology, overlap, fit, and AutoCAD audit decisions. Its layout artifact is `replace-layout-audit.json`.
 
-If equivalent English already exists in the same object or a nearby same-row/stacked pair, preserve that English and remove only Chinese. Color and layer differences do not break a pair. Do not treat technical codes as translations.
+`bilingual` owns separate source-retention, target-presence, existing-pair, duplicate, composition, layout, topology, overlap, fit, and AutoCAD audit decisions. Its layout artifact is `bilingual-layout-audit.json`.
 
-## Layout v2 contract
+Even when two rules currently match, do not merge their gate implementations.
 
-Classify changed text once as table cell, narrative panel, or fixed label. Plan its allowed region from source geometry before changing text. Tables, diagrams, dimensions, title blocks, unchanged English, neighboring regions, and the innermost printable frame are hard keep-outs.
+## Translation and layout rules
 
-Preserve font, alignment, source height, and title/body/annotation hierarchy. Fit in this order: wrap, compress width, then reduce height. Move only inside the planned region; never reduce below 55% source height. Reject the candidate if any changed text crosses it, enters a hard keep-out, has an unresolved severe new overlap, or lacks a layout decision. Do not globally beautify or run iterative collision correction.
+Use the user glossary first, then `references/cement-industry-glossary.md`, then established engineering usage. Match the longest complete Chinese term. Preserve models, standards, quantities, formatting controls, and protected markers. Technical codes, units, and font names do not count as an existing translation.
 
-Chinese-to-English DWG is verified. DXF requires manual verification. MLeader, native Table, XREF, and proxy objects require review. Runtime DLL hashes must match the bundled `src/cad` Release build.
+For bilingual layout V2, assign one source-derived allowed region to each changed label or narrative group, then perform one fit and one audit. Preserve font, alignment, hierarchy, and practical readability. Fit in this order: wrap, compress width, then reduce height. Tables, diagrams, dimensions, title blocks, neighboring regions, unchanged content, and the innermost printable frame are hard keep-outs.
+
+DWG is the verified format. DXF, MLeader, native Table, XREF, and proxy objects require manual review.

@@ -481,7 +481,8 @@ def summarize_audit(job: Path) -> dict[str, object]:
     """Reduce large machine reports to bounded model-facing counts."""
     job = absolute(job)
     artifacts = job / "artifacts"
-    layout_path = artifacts / "layout-audit.json"
+    output_mode = read_output_mode(job)
+    layout_path = artifacts / f"{output_mode}-layout-audit.json"
     logical_path = artifacts / "logical-flow-report.json"
     language_path = artifacts / "postcomposition-language-check.json"
     if not language_path.is_file():
@@ -775,9 +776,9 @@ def run_import(
     candidate = Path(str(config["outputPath"]))
     if not candidate.is_file():
         raise RuntimeError("Import succeeded without a candidate drawing.")
-    layout_audit = job / "artifacts" / "layout-audit.json"
+    layout_audit = job / "artifacts" / f"{output_mode}-layout-audit.json"
     if not layout_audit.is_file():
-        raise RuntimeError("Import succeeded without layout-audit.json; composition was not started.")
+        raise RuntimeError(f"Import succeeded without {output_mode}-layout-audit.json; composition was not started.")
 
     extension = candidate.suffix.lower()
     precomposition = job / "artifacts" / f"pre-composition-candidate{extension}"
