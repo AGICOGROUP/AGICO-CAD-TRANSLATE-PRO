@@ -17,6 +17,8 @@ internal static class TableCellLayout
         double? absoluteMinimumHeight = null)
     {
         DBObject value = transaction.GetObject(target.ObjectId, OpenMode.ForWrite, false);
+        if (value is AttributeDefinition or AttributeReference)
+            return FixedLabelLayout.Apply(database, transaction, target, topology, allowedTextBox);
         if (value is not DBText and not MText ||
             value is AttributeDefinition or AttributeReference)
         {

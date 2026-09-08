@@ -20,7 +20,11 @@ internal static class DrawingExporter
     internal static int Export(JobContext context)
     {
         context.VerifySourceAndWorkingHashes();
-        Database database = HostApplicationServices.WorkingDatabase;
+        return Write(context, HostApplicationServices.WorkingDatabase);
+    }
+
+    internal static int Write(JobContext context, Database database)
+    {
         var records = new List<ManifestRecord>();
         var unsupported = new SortedDictionary<string, int>(StringComparer.Ordinal);
         using (Transaction transaction = database.TransactionManager.StartTransaction())

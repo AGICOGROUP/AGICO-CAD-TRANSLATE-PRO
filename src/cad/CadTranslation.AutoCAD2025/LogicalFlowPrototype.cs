@@ -76,6 +76,7 @@ internal static partial class LogicalFlowPrototype
                         translationById,
                         denseRegions,
                         reportRows);
+                    if (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase))
                     replacedRecords += ApplyBilingualFixedLabels(
                         database,
                         transaction,

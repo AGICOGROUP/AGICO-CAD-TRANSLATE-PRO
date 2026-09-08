@@ -36,6 +36,7 @@ var tests = new (string Name, Action Run)[]
     ,("layout_text_metrics_estimate_cjk_and_latin_widths", Tests.LayoutTextMetricsEstimateCjkAndLatinWidths)
     ,("layout_collision_flags_only_new_severe_overlap", Tests.LayoutCollisionFlagsOnlyNewSevereOverlap)
     ,("grid_lines_create_a_table_cell", Tests.GridLinesCreateATableCell)
+    ,("merged_cell_ignores_ticks_from_neighboring_rows", Tests.MergedCellIgnoresTicksFromNeighboringRows)
     ,("region_assignment_selects_the_smallest_trustworthy_region", Tests.RegionAssignmentSelectsTheSmallestTrustworthyRegion)
     ,("region_assignment_leaves_outside_text_unassigned", Tests.RegionAssignmentLeavesOutsideTextUnassigned)
     ,("vertical_separator_creates_independent_note_columns", Tests.VerticalSeparatorCreatesIndependentNoteColumns)
@@ -1362,6 +1363,19 @@ internal static class Tests
     }
 
     // Break caught: table text is classified by word count because the surrounding grid is never recognized.
+    public static void MergedCellIgnoresTicksFromNeighboringRows()
+    {
+        Segment2[] lines = {
+            new(new(0, 0), new(60, 0)), new(new(0, 15), new(60, 15)),
+            new(new(0, 0), new(0, 30)), new(new(60, 0), new(60, 30)),
+            new(new(20, 15), new(20, 30)), new(new(40, 15), new(40, 30)),
+            new(new(0, 30), new(60, 30)) };
+        var cell = GridCellDetector.DetectContaining(lines, new Rect2(5, 5, 55, 10));
+        AssertEx.True(cell is not null);
+        AssertEx.Equal(new Rect2(0, 0, 60, 15), cell!.Bounds);
+        AssertEx.True(GridCellDetector.DetectContaining(lines.Take(1).ToArray(), new Rect2(5, 5, 55, 10)) is null);
+    }
+
     public static void GridLinesCreateATableCell()
     {
         LayoutRegion[] cells = GridCellDetector.Detect(

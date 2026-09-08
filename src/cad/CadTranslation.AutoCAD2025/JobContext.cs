@@ -22,6 +22,8 @@ internal sealed partial class JobContext
     internal JobConfig Config { get; }
     internal string JobRoot { get; }
 
+    internal JobContext Derive(JobConfig config) => new(config, JobRoot);
+
     internal static JobContext Load(string invokedOperation)
     {
         string configPath = Environment.GetEnvironmentVariable(ConfigEnvironmentVariable)

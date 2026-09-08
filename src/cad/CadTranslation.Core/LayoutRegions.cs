@@ -46,6 +46,23 @@ public static class RegionAssigner
 
 public static class GridCellDetector
 {
+    // Local ray boundaries recover merged cells split by unrelated global grid ticks.
+    public static LayoutRegion? DetectContaining(IReadOnlyList<Segment2> segments, Rect2 text, double tolerance = 1e-6)
+    {
+        var vertical = segments.Where(s => s.IsVertical(tolerance) && s.MinY <= text.Center.Y && s.MaxY >= text.Center.Y).ToArray();
+        var horizontal = segments.Where(s => s.IsHorizontal(tolerance) && s.MinX <= text.Center.X && s.MaxX >= text.Center.X).ToArray();
+        double left = vertical.Where(s => s.Start.X <= text.Left + tolerance).Select(s => s.Start.X).DefaultIfEmpty(double.NaN).Max();
+        double right = vertical.Where(s => s.Start.X >= text.Right - tolerance).Select(s => s.Start.X).DefaultIfEmpty(double.NaN).Min();
+        double bottom = horizontal.Where(s => s.Start.Y <= text.Bottom + tolerance).Select(s => s.Start.Y).DefaultIfEmpty(double.NaN).Max();
+        double top = horizontal.Where(s => s.Start.Y >= text.Top - tolerance).Select(s => s.Start.Y).DefaultIfEmpty(double.NaN).Min();
+        if (!double.IsFinite(left + right + bottom + top) || right <= left || top <= bottom) return null;
+        if (!HasVerticalBoundary(vertical, left, bottom, top, tolerance) || !HasVerticalBoundary(vertical, right, bottom, top, tolerance) ||
+            !HasHorizontalBoundary(horizontal, bottom, left, right, tolerance) || !HasHorizontalBoundary(horizontal, top, left, right, tolerance)) return null;
+        if (segments.Any(s => s.IsVertical(tolerance) && s.Start.X > left + tolerance && s.Start.X < right - tolerance && s.MaxY > bottom + tolerance && s.MinY < top - tolerance ||
+            s.IsHorizontal(tolerance) && s.Start.Y > bottom + tolerance && s.Start.Y < top - tolerance && s.MaxX > left + tolerance && s.MinX < right - tolerance)) return null;
+        return new LayoutRegion("merged-cell", LayoutRegionKind.TableCell, new Rect2(left, bottom, right, top));
+    }
+
     public static LayoutRegion[] Detect(
         IReadOnlyList<Segment2> segments,
         double tolerance = 1e-6)

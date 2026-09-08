@@ -14,7 +14,8 @@ public sealed record JobConfig(
     string ArtifactDirectory,
     string SourceLanguage,
     string TargetLanguage,
-    string OutputMode);
+    string OutputMode,
+    string? PipelineVersion = null);
 
 public static class OutputModePolicy
 {

@@ -138,6 +138,14 @@ internal static class DrawingTopologyCapture
         }
         var regions = new List<LayoutRegion>();
         regions.AddRange(GridCellDetector.Detect(segments, tolerance));
+        foreach (var text in textCandidates)
+        {
+            var merged = GridCellDetector.DetectContaining(segments, text.Source.Bounds, tolerance);
+            if (merged is not null && merged.Bounds.Height <= text.Source.OriginalTextHeight * 8 &&
+                merged.Bounds.Width <= text.Source.OriginalTextHeight * 50 &&
+                !regions.Any(r => SameBounds(r.Bounds, merged.Bounds, tolerance)))
+                regions.Add(merged with { Id = $"merged-cell-{block.Handle}-{regions.Count + 1}" });
+        }
         regions.AddRange(closedFrames
             .Where(frame => textCandidates.Count(text => frame.Contains(text.Source.Bounds, tolerance)) >= 2)
             .Select((frame, index) => new LayoutRegion(
@@ -485,6 +493,8 @@ internal static class DrawingTopologyCapture
 
     private static Rect2? TryBounds(Entity entity)
     {
+        if (entity is MText text && CadLayoutGeometry.TryFreshBounds(text) is { } fresh)
+            return new Rect2(fresh.MinX, fresh.MinY, fresh.MaxX, fresh.MaxY);
         try
         {
             Extents3d extents = entity.GeometricExtents;
@@ -569,6 +579,27 @@ internal static class DrawingTopologyCapture
             }
 
             CadDefinitionTopology definition = definitions[definitionIndex];
+            // Attribute coordinates belong to the containing space, while title-block
+            // cell lines belong to the referenced definition. Transform those cells
+            // before assigning the attribute's allowed region.
+            if (entity is AttributeReference && transaction.GetObject(entity.OwnerId, OpenMode.ForRead) is BlockReference reference)
+            {
+                var referencedBlock = (BlockTableRecord)transaction.GetObject(reference.BlockTableRecord, OpenMode.ForRead);
+                var local = definitions.FirstOrDefault(d => d.Name == referencedBlock.Name);
+                if (local is not null)
+                {
+                    var transformed = local.Regions.Where(r => r.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.ClosedFrame)
+                        .Select(r => {
+                            var corners = new[] { new Point3d(r.Bounds.Left, r.Bounds.Bottom, 0), new Point3d(r.Bounds.Right, r.Bounds.Bottom, 0),
+                                new Point3d(r.Bounds.Right, r.Bounds.Top, 0), new Point3d(r.Bounds.Left, r.Bounds.Top, 0) }
+                                .Select(p => p.TransformBy(reference.BlockTransform)).ToArray();
+                            return new LayoutRegion($"attribute-{reference.Handle}-{r.Id}", r.Kind,
+                                new Rect2(corners.Min(p => p.X), corners.Min(p => p.Y), corners.Max(p => p.X), corners.Max(p => p.Y)));
+                        }).ToArray();
+                    definition = definition with { Regions = definition.Regions.Concat(transformed)
+                        .GroupBy(r => r.Id).Select(g => g.First()).ToArray() };
+                }
+            }
             LayoutRegion? region = AssignNonNarrativeRegion(
                 text.Source,
                 definition.Regions,
