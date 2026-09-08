@@ -88,7 +88,7 @@ public static partial class ProtectedText
             return true;
         }
 
-        if (remaining.Length >= 3 && remaining[0] == '\\' && "HWCF".Contains(remaining[1]))
+        if (remaining.Length >= 3 && remaining[0] == '\\' && "HWCF".Contains(char.ToUpperInvariant(remaining[1])))
         {
             int terminator = remaining.IndexOf(';');
             if (terminator >= 0)

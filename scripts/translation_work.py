@@ -28,16 +28,26 @@ def needs_translation(record, source_language):
     text = visible(str(record.get("plainText", "")))
     return bool((CJK if source_language == "zh" else LATIN).search(text))
 
-def groups(records, source_language):
+def groups(records, source_language, *, semantic=False):
     """Same protected values, role and layout context only; stable representative IDs."""
     result = {}
     for row in records:
         if not needs_translation(row, source_language): continue
+        properties = row.get("properties", {})
+        # Presentation is applied per entity by CAD, not by shortening the translation.
+        context = {"layer": properties.get("layer"),
+                   "tag": properties.get("typeSpecific", {}).get("tag")} if semantic else properties
         key = json.dumps([row.get("plainText"), row.get("protectedTokens", []),
-            row.get("objectType"), row.get("textRole"), row.get("properties", {})],
+            row.get("objectType"), row.get("textRole"), context],
             sort_keys=True, ensure_ascii=False)
         result.setdefault(key, []).append(row)
     return list(result.values())
+
+def job_groups(records, source_language, job):
+    config = Path(job) / "config" / "export-job.json"
+    mode = json.loads(config.read_text(encoding="utf-8")).get("outputMode") if config.is_file() else "replace"
+    # Bilingual placement and its request grouping remain independent.
+    return groups(records, source_language, semantic=mode == "replace")
 
 def layout_hint(row):
     properties = row.get("properties", {})

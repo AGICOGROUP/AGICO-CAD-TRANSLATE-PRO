@@ -10,7 +10,8 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 if str(SKILL_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 from pipelines import get_pipeline
-from translation_work import direction, language, needs_translation, groups, layout_hint
+from translation_work import direction, language, needs_translation, groups, job_groups, layout_hint
+from job_timing import record as record_timing
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 AUTOCAD_2025_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows")
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
@@ -165,10 +166,12 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000) -> dic
     manifest_path = job / "exchange" / "manifest.input.jsonl"
     manifest = _read_jsonl(manifest_path)
     source_language, _ = direction(job)
-    grouped = groups(manifest, source_language)
+    grouped = job_groups(manifest, source_language, job)
     work_records = [
         {"recordId": str(rows[0]["recordId"]), "sourceText": str(rows[0].get("plainText", "")),
-         "occurrences": len(rows), "context": layout_hint(rows[0])}
+         "protectedTokens": rows[0].get("protectedTokens", []),
+         "occurrences": len(rows), "context": layout_hint(rows[0]),
+         "contextVariants": list({json.dumps(layout_hint(row), sort_keys=True): layout_hint(row) for row in rows}.values())[:4]}
         for rows in grouped
     ]
     requested_count = sum(len(rows) for rows in grouped)
@@ -208,6 +211,7 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000) -> dic
     summary_path = job / "artifacts" / "translation-worklist-summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    record_timing(job, "worklist-ready")
     return summary
 
 def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
@@ -234,7 +238,7 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
         raise ValueError(_id_diagnostic("duplicate", sorted(set(duplicates))))
 
     source_language, _ = direction(job)
-    grouped = groups(manifest, source_language)
+    grouped = job_groups(manifest, source_language, job)
     expected = {str(row["recordId"]) for rows in grouped for row in rows}
     for rows in grouped:
         representative = str(rows[0]["recordId"])
@@ -283,6 +287,7 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
                 f"invalid_translation_count={report['invalidTranslationCount']}"
             )
         os.replace(temporary, target)
+        record_timing(job, "translations-ready")
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -319,6 +324,7 @@ def validate_complete_translations(manifest_path: Path, translations_path: Path)
     stale = sorted(key for key, value in expected.items() if received[key] != value)
     if stale: raise ValueError("translations inputHash mismatch: " + _id_diagnostic("stale", stale))
     manifest_by_id = {str(record["recordId"]): record for record in manifest}
+    marker_errors = []
     for translation in translations:
         manifest_record = manifest_by_id[str(translation["recordId"])]
         token_objects = manifest_record.get("protectedTokens", [])
@@ -329,7 +335,15 @@ def validate_complete_translations(manifest_path: Path, translations_path: Path)
             if not isinstance(marker, str) or not marker: raise ValueError(f"manifest protected marker is invalid: {translation['recordId']}")
             markers.append(marker)
         actual = re.findall(r"⟦P\d{4}⟧", translation["translatedText"])
-        if actual != markers: raise ValueError(f"protected marker mismatch: {translation['recordId']}")
+        if actual != markers:
+            marker_errors.append({"recordId": translation["recordId"],
+                "sourceText": manifest_record.get("plainText", ""),
+                "translatedText": translation["translatedText"], "expectedMarkers": markers,
+                "actualMarkers": actual, "protectedTokens": token_objects})
+    if marker_errors:
+        repair = manifest_path.parent.parent / "artifacts" / "translation-marker-repairs.jsonl"
+        _atomic_write_jsonl(repair, marker_errors)
+        raise ValueError(f"protected marker mismatch: count={len(marker_errors)}, repair={repair}")
     return len(expected)
 
 def check_translations(manifest_path: Path, translations_path: Path, report_path: Path | None = None, output_mode: str = "replace") -> dict[str, object]:
@@ -665,10 +679,12 @@ def run_export(
     timeout_seconds: int | None = None,
     output_mode: str = "replace",
 ) -> int:
+    started = time.time()
     source = absolute(source)
     assert_source(source)
     require_ready(source, autocad_root)
     config = prepare_export_job(source, job, source_language, target_language, output_mode)
+    record_timing(absolute(job), "export-start", started)
     result = _run_stage(
         "export",
         absolute(job) / "config" / "export-job.json",
@@ -676,6 +692,7 @@ def run_export(
         autocad_root,
         timeout_seconds,
     )
+    record_timing(absolute(job), "export-finished" if result == 0 else "export-failed")
     if result != 0: return result
     write_export_seal(job, config)
     return result
@@ -690,7 +707,14 @@ def run_import(job: Path, translations: Path, autocad_root: Path, timeout_second
         raise ValueError("Job mode changed after export.")
     verify_export_seal(job, config)
     import types
-    return get_pipeline(mode).run_import(job, translations, autocad_root, timeout_seconds, config, types.SimpleNamespace(**globals()))
+    record_timing(job, "import-start")
+    try:
+        result = get_pipeline(mode).run_import(job, translations, autocad_root, timeout_seconds, config, types.SimpleNamespace(**globals()))
+    except Exception:
+        record_timing(job, "import-failed")
+        raise
+    record_timing(job, "import-finished" if result == 0 else "import-failed")
+    return result
 
 
 def _require_succeeded_result(result_path: Path, operation: str) -> None:
@@ -758,6 +782,8 @@ def main(argv: list[str] | None = None) -> int:
         code = 0 if output["status"] == "passed" else 1
     elif args.command == "audit-summary":
         output = summarize_audit(args.job)
+        if output.get("deliveryReady"):
+            output["workflowTiming"] = record_timing(absolute(args.job), "delivery-ready")
         code = 0 if output["status"] == "passed" else 1
     else: output, code = status(args.job), 0
     print(json.dumps(output, ensure_ascii=False, indent=2)); return code

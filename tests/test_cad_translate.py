@@ -331,7 +331,7 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(["raw"], report["rawTextChineseResidualRecordIds"])
             self.assertTrue(report_path.is_file())
 
-    def test_language_gate_rejects_fullwidth_punctuation_and_extension_b(self):
+    def test_candidate_language_gate_ignores_punctuation_only_but_rejects_extension_b(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = root / "manifest.jsonl"
@@ -349,7 +349,7 @@ class CadTranslateDryTests(unittest.TestCase):
             report = cad_translate.check_exported_candidate_language(manifest, root / "report.json")
 
             self.assertEqual("failed", report["status"])
-            self.assertEqual(["punct"], report["plainTextChineseResidualRecordIds"])
+            self.assertEqual([], report["plainTextChineseResidualRecordIds"])
             self.assertEqual(["ext-b"], report["rawTextChineseResidualRecordIds"])
 
     def test_check_translations_passes_english_and_ignores_protected_markers(self):

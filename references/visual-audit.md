@@ -4,6 +4,8 @@ Automatic success is not visual acceptance. Each mode owns its receipt: `replace
 
 Render matching source/candidate overviews, then detail windows for dense tables, title blocks, new bilingual labels and changed prose. Read compact layout reports to select windows; inspect both images yourself. Overview alone cannot establish small-text legibility.
 
+Use world-space extents from actual placed instances for detail windows; block-definition local coordinates are not drawing coordinates. Verify the intended region is present and text is readable before counting an image as evidence. Empty crops, tiny whole-sheet thumbnails and cut-off titles cannot support a passed review. Correct the window rather than writing a passing receipt. Compare company names, equipment/material qualifiers and any shortened or reduced-height labels against the source. Include the final post-composition drawing, not an intermediate layout candidate.
+
 ```powershell
 python scripts/render_review.py --drawing "source.dwg" --output "jobs/example/artifacts/source-overview.png"
 python scripts/render_review.py --drawing "jobs/example/results/candidate.dwg" --output "jobs/example/artifacts/candidate-overview.png"

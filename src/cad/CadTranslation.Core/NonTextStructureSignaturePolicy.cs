@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace CadTranslation.Core;
 
 /// <summary>
@@ -15,6 +17,22 @@ public static class NonTextStructureSignaturePolicy
 
         return string.Equals(objectType, "AcDbBlockReference", StringComparison.Ordinal)
             ? stablePlacement
-            : geometricExtents;
+            : NormalizeExtents(geometricExtents);
+    }
+
+    private static string NormalizeExtents(string value)
+    {
+        string[] parts = value.Split(',');
+        if (parts.Length != 6 || parts.Any(part => !double.TryParse(
+                part,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out _)))
+        {
+            return value;
+        }
+
+        return string.Join(",", parts.Select(part =>
+            double.Parse(part, CultureInfo.InvariantCulture).ToString("G15", CultureInfo.InvariantCulture)));
     }
 }

@@ -68,6 +68,16 @@ internal static class LayoutAuditor
         AuditLocalTextOverlap(candidateTexts, risks);
         AuditProtectedGeometry(baseline, candidateTexts, risks);
 
+        // Unreferenced definitions are retained and translated, but have no placed
+        // geometry in any model/paper layout. Keep their findings as advisory.
+        var placedDefinitions = baseline.BlockInstances.Select(instance => instance.DefinitionId)
+            .ToHashSet(StringComparer.Ordinal);
+        for (int i = 0; i < risks.Count; i++)
+        {
+            if (!placedDefinitions.Contains(risks[i].DefinitionName))
+                risks[i] = risks[i] with { Level = "low", Detail = "Unreferenced block definition (not placed in any layout). " + risks[i].Detail };
+        }
+
         string[] expectedPaths = baseline.BlockInstances
             .Select(instance => instance.Path)
             .Distinct(StringComparer.Ordinal)
@@ -133,7 +143,13 @@ internal static class LayoutAuditor
             {
                 Rect2 worldCandidate = instance.WorldTransform.Apply(text.Bounds);
                 Rect2 worldRegion = instance.WorldTransform.Apply(region.Bounds);
-                if (!worldRegion.Contains(worldCandidate, Math.Max(1e-6, text.Baseline.Source.OriginalTextHeight * 0.10)))
+                double containmentTolerance = Math.Max(1e-6, text.Baseline.Source.OriginalTextHeight * 0.10);
+                bool sourceInsideRegion = region.Bounds.Contains(text.Baseline.Source.Bounds, containmentTolerance);
+                bool candidateInsideRegion = worldRegion.Contains(worldCandidate, containmentTolerance);
+                if (LayoutCrossRegionPolicy.ShouldReport(
+                        text.Baseline.IsChanged,
+                        sourceInsideRegion,
+                        candidateInsideRegion))
                 {
                     risks.Add(new LayoutAuditRiskRow(
                         "cross-region",

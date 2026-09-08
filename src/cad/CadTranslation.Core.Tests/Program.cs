@@ -8,8 +8,10 @@ var tests = new (string Name, Action Run)[]
     ("mtext_fields_and_codes_are_protected", Tests.MTextFieldsAndCodesAreProtected),
     ("mtext_group_braces_are_protected_and_round_trip_exactly", Tests.MTextGroupBracesAreProtectedAndRoundTripExactly),
     ("output_restoration_localizes_protected_chinese_units_and_font_names", Tests.OutputRestorationLocalizesProtectedChineseUnitsAndFontNames),
+    ("output_restoration_compacts_whitespace_before_chinese_units", Tests.OutputRestorationCompactsWhitespaceBeforeChineseUnits),
     ("translation_rejects_changed_numbers", Tests.TranslationRejectsChangedNumbers),
     ("invariant_tokenizer_does_not_treat_translated_words_as_units", Tests.InvariantTokenizerDoesNotTreatTranslatedWordsAsUnits),
+    ("invariant_tokenizer_ignores_mtext_paragraph_codes", Tests.InvariantTokenizerIgnoresMTextParagraphCodes),
     ("translation_rejects_manifest_that_cannot_round_trip_raw_text", Tests.TranslationRejectsManifestThatCannotRoundTripRawText),
     ("dimension_placeholders_and_codes_are_protected", Tests.DimensionPlaceholdersAndCodesAreProtected),
     ("approved_translation_restores_protected_tokens_exactly", Tests.ApprovedTranslationRestoresProtectedTokensExactly),
@@ -46,6 +48,7 @@ var tests = new (string Name, Action Run)[]
     ,("new_overlap_uses_soft_five_and_fifteen_percent_thresholds", Tests.NewOverlapUsesSoftFiveAndFifteenPercentThresholds)
     ,("standalone_punctuation_contact_does_not_block_layout", Tests.StandalonePunctuationContactDoesNotBlockLayout)
     ,("unchanged_text_pair_does_not_create_translation_overlap_risk", Tests.UnchangedTextPairDoesNotCreateTranslationOverlapRisk)
+    ,("cross_region_audit_ignores_unchanged_preexisting_overflow", Tests.CrossRegionAuditIgnoresUnchangedPreexistingOverflow)
     ,("nested_block_definition_is_expanded_for_every_world_instance", Tests.NestedBlockDefinitionIsExpandedForEveryWorldInstance)
     ,("table_cell_region_routes_long_text_to_table_layout", Tests.TableCellRegionRoutesLongTextToTableLayout)
     ,("text_alignment_maps_to_matching_mtext_attachment", Tests.TextAlignmentMapsToMatchingMTextAttachment)
@@ -716,6 +719,9 @@ internal static class Tests
             NonTextStructureSignaturePolicy.GeometryToken("AcDbLine", string.Empty, "0,0,0,100,0,0"),
             NonTextStructureSignaturePolicy.GeometryToken("AcDbLine", string.Empty, "0,0,0,120,0,0"),
             StringComparison.Ordinal));
+        AssertEx.Equal(
+            NonTextStructureSignaturePolicy.GeometryToken("AcDbEllipse", string.Empty, "902.3882343574285,-1099.937271908388,0,1530.3717926609206,-588.4534325089359,0"),
+            NonTextStructureSignaturePolicy.GeometryToken("AcDbEllipse", string.Empty, "902.3882343574285,-1099.937271908388,0,1530.3717926609206,-588.4534325089357,0"));
     }
 
     public static void TitleBlockAttributesCanScaleInPlaceToStayInsideTheirCell()
@@ -964,12 +970,12 @@ internal static class Tests
 
     public static void MTextFieldsAndCodesAreProtected()
     {
-        var parsed = ProtectedText.Parse(@"{\H1.5x;\W0.8x;\FArial|b0|i0;\C1;尺寸 %%d %%p %%c Ø50 1,25 MPa 20毫米 20N·m A-20 {nested {value text}} {name} ${name} %s %1\P%<\AcVar ctab>%}");
+        var parsed = ProtectedText.Parse(@"{\f宋体|b0|i0|c0|p0;\H1.5x;\W0.8x;\FArial|b0|i0;\C1;尺寸 %%d %%p %%c Ø50 1,25 MPa 20毫米 20N·m A-20 {nested {value text}} {name} ${name} %s %1\P%<\AcVar ctab>%}");
         string[] protectedRaw = parsed.ProtectedTokens.Select(x => x.Raw).ToArray();
 
         foreach (string expected in new[]
         {
-            @"\H1.5x;", @"\W0.8x;", @"\FArial|b0|i0;", @"\C1;", "%%d", "%%p", "%%c",
+            @"\f宋体|b0|i0|c0|p0;", @"\H1.5x;", @"\W0.8x;", @"\FArial|b0|i0;", @"\C1;", "%%d", "%%p", "%%c",
             "Ø50", "1,25 MPa", "20毫米", "20N·m", "A-20", "{name}", "${name}", "%s", "%1", @"\P", @"%<\AcVar ctab>%"
         })
         {
@@ -1009,6 +1015,18 @@ internal static class Tests
 
         AssertEx.Equal(@"{\FSimSun|c134;Elevation 2.0m, Intensity 7°}", output);
         AssertEx.True(TranslationValidator.HasSameInvariantTokens(raw, output));
+    }
+
+    // Break caught: a protected number-unit such as "100 吨" was restored as
+    // "100 t", which the invariant tokenizer read as a bare 100 and rejected.
+    public static void OutputRestorationCompactsWhitespaceBeforeChineseUnits()
+    {
+        var token = new ProtectedToken("⟦P0001⟧", "number-unit", "100 吨");
+
+        ProtectedToken output = TranslationValidator.NormalizeProtectedTokenForOutput(token);
+
+        AssertEx.Equal("100t", output.Raw);
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens("日产 100 吨", "Capacity 100t/d".Replace("/d", string.Empty, StringComparison.Ordinal)));
     }
 
     public static void TranslationRejectsChangedNumbers()
@@ -1054,6 +1072,33 @@ internal static class Tests
         AssertEx.True(TranslationValidator.HasSameInvariantTokens("1、说明", "1 General note"));
         AssertEx.False(TranslationValidator.HasSameInvariantTokens("压力 1.6MPa", "Pressure 1.6kPa"));
         AssertEx.True(TranslationValidator.HasSameInvariantTokens("型号 GB50010", "Model GB50010"));
+    }
+
+    // Break caught: the P in AutoCAD's MTEXT paragraph code (\P) was joined to
+    // the following number or equipment tag and misread as model data.
+    public static void InvariantTokenizerIgnoresMTextParagraphCodes()
+    {
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\P1、模式", @"\P 1 Mode"));
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\PZDV004 全开", @"\P ZDV004 fully open"));
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\PBV021/BV022", @"\P BV021/BV022"));
+    }
+
+    // Break caught: an unchanged source label already outside an inferred cell
+    // was reported as a new cross-region translation failure.
+    public static void CrossRegionAuditIgnoresUnchangedPreexistingOverflow()
+    {
+        AssertEx.False(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: false,
+            sourceInsideRegion: false,
+            candidateInsideRegion: false));
+        AssertEx.True(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: true,
+            sourceInsideRegion: false,
+            candidateInsideRegion: false));
+        AssertEx.True(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: false,
+            sourceInsideRegion: true,
+            candidateInsideRegion: false));
     }
 
     // Break caught: a manifest exported by the old parser can silently drop MTEXT grouping braces on import.

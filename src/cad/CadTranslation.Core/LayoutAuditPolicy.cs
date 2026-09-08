@@ -42,6 +42,15 @@ public static class LayoutAuditPolicy
         !string.Equals(code, "geometry-overlap", StringComparison.OrdinalIgnoreCase);
 }
 
+public static class LayoutCrossRegionPolicy
+{
+    public static bool ShouldReport(
+        bool isChanged,
+        bool sourceInsideRegion,
+        bool candidateInsideRegion) =>
+        !candidateInsideRegion && (isChanged || sourceInsideRegion);
+}
+
 public static class LayoutTextOverlapPolicy
 {
     public static bool ShouldReport(

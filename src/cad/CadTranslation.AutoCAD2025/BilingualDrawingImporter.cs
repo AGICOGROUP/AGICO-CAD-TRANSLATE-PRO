@@ -142,9 +142,9 @@ internal static class BilingualDrawingImporter
         double height = source.Source.OriginalTextHeight;
         var container = definition.Regions.Where(r => r.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.ClosedFrame)
             .Where(r => r.Bounds.Contains(box, height * .05)).OrderBy(r => r.Bounds.Area).FirstOrDefault();
-        Rect2 allowed = container?.Bounds ?? new Rect2(box.Left - height * 8, box.Bottom - height * 8, box.Right + height * 8, box.Top + height * 8);
-        foreach (double scale in new[] { .75, .65, .55 })
-        foreach (double widthFactor in new[] { 1.0, .8, .65 })
+        Rect2 allowed = container?.Bounds ?? new Rect2(box.Left - height * 16, box.Bottom - height * 16, box.Right + height * 16, box.Top + height * 16);
+        foreach (double scale in new[] { .75, .65, .55, .45, .35 })
+        foreach (double widthFactor in new[] { 1.0, .8, .65, .5, .4 })
         foreach (double width in new[] { Math.Min(allowed.Width, Math.Max(box.Width, height * 4)), Math.Min(allowed.Width, Math.Max(box.Width * 1.6, height * 8)) }.Distinct())
         {
             text.TextHeight = height * scale;
@@ -153,7 +153,7 @@ internal static class BilingualDrawingImporter
             double w = Math.Max(text.TextHeight, text.ActualWidth) * 1.02, h = Math.Max(text.TextHeight, text.ActualHeight) * 1.02;
             if (!(w > 0 && h > 0)) continue;
             double gap = height * .12;
-            for (int step = 0; step < 5; step++)
+            for (int step = 0; step < (container is null ? 17 : 9); step++)
             {
                 double offset = gap + height * step * .65;
                 foreach (var point in new[] {
@@ -206,6 +206,7 @@ internal static class BilingualDrawingImporter
         return null;
     }
     internal static string Plain(string raw) { using var text = new MText { Contents = raw }; return text.Text; }
-    private static string Normalize(string value) => Regex.Replace(value, @"[\s\p{P}]+", "").ToUpperInvariant();
+    private static string Normalize(string value) => Regex.Replace(value, @"[\s\p{P}]+", "").ToUpperInvariant()
+        .Replace("TPD", "T", StringComparison.Ordinal).Replace("TD", "T", StringComparison.Ordinal);
     private static string Escape(string text) => text.Replace("\\", "\\\\").Replace("{", "\\{").Replace("}", "\\}").Replace("\r", "").Replace("\n", "\\P");
 }

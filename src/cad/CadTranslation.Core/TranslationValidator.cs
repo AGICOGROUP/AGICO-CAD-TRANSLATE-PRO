@@ -152,7 +152,7 @@ public static partial class TranslationValidator
     }
 
     private static IEnumerable<string> NormalizeInvariantTokens(string value) =>
-        InvariantToken.Matches(value)
+        InvariantToken.Matches(value.Replace(@"\P", " ", StringComparison.OrdinalIgnoreCase))
             .Select(match => NormalizeInvariantToken(match.Value));
 
     private static string NormalizeInvariantToken(string value)
@@ -204,7 +204,7 @@ public static partial class TranslationValidator
         foreach ((string chinese, string symbol) in ChineseUnitSymbols)
         {
             if (value.EndsWith(chinese, StringComparison.Ordinal))
-                return value[..^chinese.Length] + symbol;
+                return value[..^chinese.Length].TrimEnd() + symbol;
         }
         return value;
     }

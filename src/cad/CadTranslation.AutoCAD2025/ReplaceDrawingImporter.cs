@@ -187,7 +187,7 @@ internal static class ReplaceDrawingImporter
         ParsedText parsed = ProtectedText.Parse(current.RawText);
         string actual = Hashing.Sha256Text($"{record.RecordId}|{current.RawText}|{parsed.FormatTemplate}|{JsonSerializer.Serialize(current.Properties, JsonDefaults.Options)}");
         if (!string.Equals(record.RawText, current.RawText, StringComparison.Ordinal) || !string.Equals(record.InputHash, actual, StringComparison.Ordinal))
-            throw new CommandProtocolException("stale_drawing_text", "Drawing text or protected properties changed after export.");
+            throw new CommandProtocolException("stale_drawing_text", $"Handle {record.Handle}: drawing text or protected properties changed after export. Expected properties: {JsonSerializer.Serialize(record.Properties, JsonDefaults.Options)}; actual properties: {JsonSerializer.Serialize(current.Properties, JsonDefaults.Options)}; raw text equal: {string.Equals(record.RawText, current.RawText, StringComparison.Ordinal)}.");
     }
 
     private static T[] ReadJsonLines<T>(string path, string name)

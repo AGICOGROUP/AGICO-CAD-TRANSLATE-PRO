@@ -8,8 +8,16 @@ namespace CadTranslation.AutoCAD2025.Adapters;
 internal static class TextSlotFactory
 {
     internal static TextSlot FromDbText(DBText value, string slot, string role) => new(
-        slot, role, value.TextString, Geometry(value.Position, value.AlignmentPoint, value.Rotation),
+        slot, role, StableDbText(value), Geometry(value.Position, value.AlignmentPoint, value.Rotation),
         Properties(value, value.Height, value.WidthFactor));
+
+    private static string StableDbText(DBText value)
+    {
+        if (!value.HasFields) return value.TextString;
+        var field = (Field)value.Database.TransactionManager.TopTransaction.GetObject(value.GetField(), OpenMode.ForRead);
+        string code = field.GetFieldCode();
+        return code.StartsWith("%<", StringComparison.Ordinal) ? code : "%<" + code + ">%";
+    }
 
     internal static TextSlot FromMText(MText value, string slot, string role) => new(
         slot, role, value.Contents, Geometry(value.Location, null, value.Rotation),
