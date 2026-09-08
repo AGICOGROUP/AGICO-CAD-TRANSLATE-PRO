@@ -11,6 +11,7 @@ if str(SKILL_ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 from pipelines import get_pipeline
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
+AUTOCAD_2025_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows")
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
 PLUGIN_FILES = ("CadTranslation.AutoCAD2025.dll", "CadTranslation.Core.dll", "CadTranslation.Contracts.dll")
 TARGET_LANGUAGE_RESIDUE = re.compile(
@@ -45,7 +46,7 @@ def autocad_release(autocad_root: Path) -> str:
     return releases[year]
 
 def runtime_plugin_dir(autocad_root: Path) -> Path:
-    return AUTOCAD_2027_PLUGIN_DIR if autocad_release(autocad_root) == "R26.0" else PLUGIN_DIR
+    return AUTOCAD_2027_PLUGIN_DIR if autocad_release(autocad_root) == "R26.0" else AUTOCAD_2025_PLUGIN_DIR
 
 def profile(release: str = "R25.0") -> dict[str, object]:
     if release not in {"R25.0", "R26.0"}:

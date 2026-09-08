@@ -44,7 +44,7 @@ internal static class DrawingVerifier
                 throw new CommandProtocolException("missing_translation", "translationPath is required for verification.");
             TranslationRecord[] translations = ReadJsonLines<TranslationRecord>(context.Config.TranslationPath, "translation");
             LayoutAuditReport layoutAudit = ReadJsonFile<LayoutAuditReport>(
-                Path.Combine(context.Config.ArtifactDirectory, "layout-audit.json"),
+                Path.Combine(context.Config.ArtifactDirectory, context.Config.OutputMode + "-layout-audit.json"),
                 "layout_audit");
             Dictionary<string, CandidateIdentityOverride> identityOverrides = layoutAudit.Texts
                 .Where(text => !string.Equals(text.OldHandle, text.NewHandle, StringComparison.OrdinalIgnoreCase))

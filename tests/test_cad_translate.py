@@ -493,6 +493,13 @@ class CadTranslateDryTests(unittest.TestCase):
         self.assertEqual("BilingualPipeline", type(bilingual).__name__)
         self.assertIsNot(type(replace), type(bilingual))
 
+    def test_compose_and_verify_use_mode_owned_layout_audits(self):
+        root = Path(__file__).resolve().parents[1] / "src" / "cad" / "CadTranslation.AutoCAD2025"
+        for name in ("LogicalFlowPrototype.cs", "DrawingVerifier.cs"):
+            source = (root / name).read_text(encoding="utf-8")
+            self.assertIn('Config.OutputMode', source)
+            self.assertIn('"-layout-audit.json"', source)
+
     def test_translation_gate_calls_only_selected_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -791,6 +798,15 @@ class CadTranslateDryTests(unittest.TestCase):
         )
         self.assertEqual(
             Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows"),
+            directory,
+        )
+
+    def test_autocad_2025_uses_trusted_application_plugins_directory(self):
+        directory = cad_translate.runtime_plugin_dir(
+            Path(r"E:\AUTOCAD2025\AutoCAD 2025")
+        )
+        self.assertEqual(
+            Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows"),
             directory,
         )
 
