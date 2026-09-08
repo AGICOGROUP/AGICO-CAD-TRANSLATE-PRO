@@ -1,4 +1,4 @@
 interface:
-  display_name: "Translate CAD Files"
-  short_description: "Translate Chinese DWG and reviewable DXF to English"
-  default_prompt: "Use $translate-cad-files to translate this Chinese AutoCAD 2025 DWG to English, or process this DXF with manual verification, while preserving supported drawing structure and using bounded work batches."
+  display_name: "CAD Translate Pro"
+  short_description: "Chinese-English CAD replacement or additive bilingual translation"
+  default_prompt: "Use $translate-cad-files with the user's requested language direction and output mode: replace source text, or preserve it and add nearby translation. Use the selected mode's independent pipeline and verification."

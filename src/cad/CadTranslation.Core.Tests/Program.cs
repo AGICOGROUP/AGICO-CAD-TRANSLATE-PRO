@@ -8,8 +8,10 @@ var tests = new (string Name, Action Run)[]
     ("mtext_fields_and_codes_are_protected", Tests.MTextFieldsAndCodesAreProtected),
     ("mtext_group_braces_are_protected_and_round_trip_exactly", Tests.MTextGroupBracesAreProtectedAndRoundTripExactly),
     ("output_restoration_localizes_protected_chinese_units_and_font_names", Tests.OutputRestorationLocalizesProtectedChineseUnitsAndFontNames),
+    ("output_restoration_compacts_whitespace_before_chinese_units", Tests.OutputRestorationCompactsWhitespaceBeforeChineseUnits),
     ("translation_rejects_changed_numbers", Tests.TranslationRejectsChangedNumbers),
     ("invariant_tokenizer_does_not_treat_translated_words_as_units", Tests.InvariantTokenizerDoesNotTreatTranslatedWordsAsUnits),
+    ("invariant_tokenizer_ignores_mtext_paragraph_codes", Tests.InvariantTokenizerIgnoresMTextParagraphCodes),
     ("translation_rejects_manifest_that_cannot_round_trip_raw_text", Tests.TranslationRejectsManifestThatCannotRoundTripRawText),
     ("dimension_placeholders_and_codes_are_protected", Tests.DimensionPlaceholdersAndCodesAreProtected),
     ("approved_translation_restores_protected_tokens_exactly", Tests.ApprovedTranslationRestoresProtectedTokensExactly),
@@ -27,6 +29,8 @@ var tests = new (string Name, Action Run)[]
     ("verify_structure_errors_still_read_candidate_content", Tests.VerifyStructureErrorsStillReadCandidateContent),
     ("verify_preflight_failure_has_safe_atomic_artifact_route", Tests.VerifyPreflightFailureHasSafeAtomicArtifactRoute),
     ("job_config_directory_resolves_to_its_parent_job_root", Tests.JobConfigDirectoryResolvesToItsParentJobRoot)
+    ,("output_mode_policy_normalizes_legacy_english", Tests.OutputModePolicyNormalizesLegacyEnglish)
+    ,("output_mode_policy_rejects_unknown_mode", Tests.OutputModePolicyRejectsUnknownMode)
     ,("layout_fit_wraps_before_compressing_or_shrinking", Tests.LayoutFitWrapsBeforeCompressingOrShrinking)
     ,("layout_fit_respects_width_and_height_floors", Tests.LayoutFitRespectsWidthAndHeightFloors)
     ,("fixed_labels_never_use_emergency_ten_percent_height", Tests.FixedLabelsNeverUseEmergencyTenPercentHeight)
@@ -34,6 +38,7 @@ var tests = new (string Name, Action Run)[]
     ,("layout_text_metrics_estimate_cjk_and_latin_widths", Tests.LayoutTextMetricsEstimateCjkAndLatinWidths)
     ,("layout_collision_flags_only_new_severe_overlap", Tests.LayoutCollisionFlagsOnlyNewSevereOverlap)
     ,("grid_lines_create_a_table_cell", Tests.GridLinesCreateATableCell)
+    ,("merged_cell_ignores_ticks_from_neighboring_rows", Tests.MergedCellIgnoresTicksFromNeighboringRows)
     ,("region_assignment_selects_the_smallest_trustworthy_region", Tests.RegionAssignmentSelectsTheSmallestTrustworthyRegion)
     ,("region_assignment_leaves_outside_text_unassigned", Tests.RegionAssignmentLeavesOutsideTextUnassigned)
     ,("vertical_separator_creates_independent_note_columns", Tests.VerticalSeparatorCreatesIndependentNoteColumns)
@@ -43,6 +48,7 @@ var tests = new (string Name, Action Run)[]
     ,("new_overlap_uses_soft_five_and_fifteen_percent_thresholds", Tests.NewOverlapUsesSoftFiveAndFifteenPercentThresholds)
     ,("standalone_punctuation_contact_does_not_block_layout", Tests.StandalonePunctuationContactDoesNotBlockLayout)
     ,("unchanged_text_pair_does_not_create_translation_overlap_risk", Tests.UnchangedTextPairDoesNotCreateTranslationOverlapRisk)
+    ,("cross_region_audit_ignores_unchanged_preexisting_overflow", Tests.CrossRegionAuditIgnoresUnchangedPreexistingOverflow)
     ,("nested_block_definition_is_expanded_for_every_world_instance", Tests.NestedBlockDefinitionIsExpandedForEveryWorldInstance)
     ,("table_cell_region_routes_long_text_to_table_layout", Tests.TableCellRegionRoutesLongTextToTableLayout)
     ,("text_alignment_maps_to_matching_mtext_attachment", Tests.TextAlignmentMapsToMatchingMTextAttachment)
@@ -88,6 +94,17 @@ var tests = new (string Name, Action Run)[]
     ,("narrative_row_boxes_fallback_when_source_centers_are_outside", Tests.NarrativeRowBoxesFallbackWhenSourceCentersAreOutside)
     ,("narrative_inline_fragments_wrap_as_one_visual_row", Tests.NarrativeInlineFragmentsWrapAsOneVisualRow)
     ,("source_neighbor_slots_are_mutually_exclusive_on_same_row", Tests.SourceNeighborSlotsAreMutuallyExclusiveOnSameRow)
+    ,("layout_v2_assigns_every_changed_record_once", Tests.LayoutV2AssignsEveryChangedRecordOnce)
+    ,("layout_v2_clamps_narrative_before_right_keepout", Tests.LayoutV2ClampsNarrativeBeforeRightKeepout)
+    ,("layout_v2_clamps_fixed_label_before_upper_keepout", Tests.LayoutV2ClampsFixedLabelBeforeUpperKeepout)
+    ,("layout_v2_partitions_fixed_label_peers", Tests.LayoutV2PartitionsFixedLabelPeers)
+    ,("layout_v2_keeps_table_text_inside_parent_cell", Tests.LayoutV2KeepsTableTextInsideParentCell)
+    ,("layout_v2_runs_one_fit_and_one_audit", Tests.LayoutV2RunsOneFitAndOneAudit)
+    ,("layout_v2_narrative_fragments_share_one_panel", Tests.LayoutV2NarrativeFragmentsShareOnePanel)
+    ,("layout_v2_classifies_large_unframed_mtext_as_narrative", Tests.LayoutV2ClassifiesLargeUnframedMTextAsNarrative)
+    ,("layout_v2_classifies_long_notes_inside_sheet_frame_as_narrative", Tests.LayoutV2ClassifiesLongNotesInsideSheetFrameAsNarrative)
+    ,("topology_capture_excludes_erased_entities", Tests.TopologyCaptureExcludesErasedEntities)
+    ,("topology_capture_excludes_regenerated_dimension_text", Tests.TopologyCaptureExcludesRegeneratedDimensionText)
     ,("fixed_label_slot_uses_free_space_until_neighbor_midpoint", Tests.FixedLabelSlotUsesFreeSpaceUntilNeighborMidpoint)
     ,("isolated_fixed_label_slot_stays_close_to_source_visual_width", Tests.IsolatedFixedLabelSlotStaysCloseToSourceVisualWidth)
     ,("isolated_fixed_label_slot_allows_source_height_english_label", Tests.IsolatedFixedLabelSlotAllowsSourceHeightEnglishLabel)
@@ -141,6 +158,7 @@ var tests = new (string Name, Action Run)[]
     ,("narrative_panel_planner_uses_second_pass_to_add_a_fourth_column", Tests.NarrativePanelPlannerUsesSecondPassToAddAFourthColumn)
     ,("authoritative_note_selector_splits_neighboring_prose_columns", Tests.AuthoritativeNoteSelectorSplitsNeighboringProseColumns)
     ,("authoritative_note_selector_excludes_short_diagram_labels", Tests.AuthoritativeNoteSelectorExcludesShortDiagramLabels)
+    ,("authoritative_note_selector_excludes_formatted_short_table_labels", Tests.AuthoritativeNoteSelectorExcludesFormattedShortTableLabels)
     ,("authoritative_note_selector_preserves_distant_sheet_panels", Tests.AuthoritativeNoteSelectorPreservesDistantSheetPanels)
 };
 
@@ -199,6 +217,37 @@ internal static class Tests
         AssertEx.SequenceEqual(
             ["note-1", "note-2", "note-3", "note-4"],
             groups[0].MemberIds.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    // Break caught: MText formatting codes make short equipment-table labels
+    // look like long prose and collapse a 13-row, two-column legend into one note.
+    public static void AuthoritativeNoteSelectorExcludesFormattedShortTableLabels()
+    {
+        var samples = new List<FragmentedNarrativeSample>();
+        string[] equipmentNames =
+        [
+            "压缩空气（客户自备）", "电气控制系统", "包装除尘器", "小包机", "吨包机",
+            "吨包/小包仓", "库底硫化散装系统", "罐车仓", "罗茨风机输送系统",
+            "螺旋输送机", "主风机", "脉冲收尘器", "设备名称"
+        ];
+        for (int row = 0; row < equipmentNames.Length; row++)
+        {
+            samples.Add(new FragmentedNarrativeSample(
+                $"item-{row}",
+                new Rect2(0, 120 - row * 9, 8, 127 - row * 9),
+                $@"\T1.001;{25 - row}",
+                true));
+            samples.Add(new FragmentedNarrativeSample(
+                $"name-{row}",
+                new Rect2(12, 120 - row * 9, 72, 127 - row * 9),
+                $@"\T1.001;{equipmentNames[row]}",
+                true));
+        }
+
+        NarrativeOccupancyGroup[] groups =
+            AuthoritativeNarrativeSelector.SelectPanelGroups(samples, 8);
+
+        AssertEx.Equal(0, groups.Length);
     }
 
     public static void AuthoritativeNoteSelectorPreservesDistantSheetPanels()
@@ -670,6 +719,9 @@ internal static class Tests
             NonTextStructureSignaturePolicy.GeometryToken("AcDbLine", string.Empty, "0,0,0,100,0,0"),
             NonTextStructureSignaturePolicy.GeometryToken("AcDbLine", string.Empty, "0,0,0,120,0,0"),
             StringComparison.Ordinal));
+        AssertEx.Equal(
+            NonTextStructureSignaturePolicy.GeometryToken("AcDbEllipse", string.Empty, "902.3882343574285,-1099.937271908388,0,1530.3717926609206,-588.4534325089359,0"),
+            NonTextStructureSignaturePolicy.GeometryToken("AcDbEllipse", string.Empty, "902.3882343574285,-1099.937271908388,0,1530.3717926609206,-588.4534325089357,0"));
     }
 
     public static void TitleBlockAttributesCanScaleInPlaceToStayInsideTheirCell()
@@ -918,12 +970,12 @@ internal static class Tests
 
     public static void MTextFieldsAndCodesAreProtected()
     {
-        var parsed = ProtectedText.Parse(@"{\H1.5x;\W0.8x;\FArial|b0|i0;\C1;尺寸 %%d %%p %%c Ø50 1,25 MPa 20毫米 20N·m A-20 {nested {value text}} {name} ${name} %s %1\P%<\AcVar ctab>%}");
+        var parsed = ProtectedText.Parse(@"{\f宋体|b0|i0|c0|p0;\H1.5x;\W0.8x;\FArial|b0|i0;\C1;尺寸 %%d %%p %%c Ø50 1,25 MPa 20毫米 20N·m A-20 {nested {value text}} {name} ${name} %s %1\P%<\AcVar ctab>%}");
         string[] protectedRaw = parsed.ProtectedTokens.Select(x => x.Raw).ToArray();
 
         foreach (string expected in new[]
         {
-            @"\H1.5x;", @"\W0.8x;", @"\FArial|b0|i0;", @"\C1;", "%%d", "%%p", "%%c",
+            @"\f宋体|b0|i0|c0|p0;", @"\H1.5x;", @"\W0.8x;", @"\FArial|b0|i0;", @"\C1;", "%%d", "%%p", "%%c",
             "Ø50", "1,25 MPa", "20毫米", "20N·m", "A-20", "{name}", "${name}", "%s", "%1", @"\P", @"%<\AcVar ctab>%"
         })
         {
@@ -963,6 +1015,18 @@ internal static class Tests
 
         AssertEx.Equal(@"{\FSimSun|c134;Elevation 2.0m, Intensity 7°}", output);
         AssertEx.True(TranslationValidator.HasSameInvariantTokens(raw, output));
+    }
+
+    // Break caught: a protected number-unit such as "100 吨" was restored as
+    // "100 t", which the invariant tokenizer read as a bare 100 and rejected.
+    public static void OutputRestorationCompactsWhitespaceBeforeChineseUnits()
+    {
+        var token = new ProtectedToken("⟦P0001⟧", "number-unit", "100 吨");
+
+        ProtectedToken output = TranslationValidator.NormalizeProtectedTokenForOutput(token);
+
+        AssertEx.Equal("100t", output.Raw);
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens("日产 100 吨", "Capacity 100t/d".Replace("/d", string.Empty, StringComparison.Ordinal)));
     }
 
     public static void TranslationRejectsChangedNumbers()
@@ -1008,6 +1072,33 @@ internal static class Tests
         AssertEx.True(TranslationValidator.HasSameInvariantTokens("1、说明", "1 General note"));
         AssertEx.False(TranslationValidator.HasSameInvariantTokens("压力 1.6MPa", "Pressure 1.6kPa"));
         AssertEx.True(TranslationValidator.HasSameInvariantTokens("型号 GB50010", "Model GB50010"));
+    }
+
+    // Break caught: the P in AutoCAD's MTEXT paragraph code (\P) was joined to
+    // the following number or equipment tag and misread as model data.
+    public static void InvariantTokenizerIgnoresMTextParagraphCodes()
+    {
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\P1、模式", @"\P 1 Mode"));
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\PZDV004 全开", @"\P ZDV004 fully open"));
+        AssertEx.True(TranslationValidator.HasSameInvariantTokens(@"\PBV021/BV022", @"\P BV021/BV022"));
+    }
+
+    // Break caught: an unchanged source label already outside an inferred cell
+    // was reported as a new cross-region translation failure.
+    public static void CrossRegionAuditIgnoresUnchangedPreexistingOverflow()
+    {
+        AssertEx.False(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: false,
+            sourceInsideRegion: false,
+            candidateInsideRegion: false));
+        AssertEx.True(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: true,
+            sourceInsideRegion: false,
+            candidateInsideRegion: false));
+        AssertEx.True(LayoutCrossRegionPolicy.ShouldReport(
+            isChanged: false,
+            sourceInsideRegion: true,
+            candidateInsideRegion: false));
     }
 
     // Break caught: a manifest exported by the old parser can silently drop MTEXT grouping braces on import.
@@ -1235,6 +1326,18 @@ internal static class Tests
         AssertEx.Equal(Path.Combine(job, "other"), JobPathPolicy.ResolveJobRoot(Path.Combine(job, "other", "job.json")));
     }
 
+    public static void OutputModePolicyNormalizesLegacyEnglish()
+    {
+        AssertEx.Equal("replace", OutputModePolicy.Normalize("english"));
+        AssertEx.Equal("replace", OutputModePolicy.Normalize(null));
+        AssertEx.Equal("bilingual", OutputModePolicy.Normalize(" BILINGUAL "));
+    }
+
+    public static void OutputModePolicyRejectsUnknownMode()
+    {
+        AssertEx.Throws<ArgumentException>(() => OutputModePolicy.Normalize("mixed"));
+    }
+
     // Break caught: the optimizer shrinks English text before trying word wrapping.
     public static void LayoutFitWrapsBeforeCompressingOrShrinking()
     {
@@ -1305,6 +1408,19 @@ internal static class Tests
     }
 
     // Break caught: table text is classified by word count because the surrounding grid is never recognized.
+    public static void MergedCellIgnoresTicksFromNeighboringRows()
+    {
+        Segment2[] lines = {
+            new(new(0, 0), new(60, 0)), new(new(0, 15), new(60, 15)),
+            new(new(0, 0), new(0, 30)), new(new(60, 0), new(60, 30)),
+            new(new(20, 15), new(20, 30)), new(new(40, 15), new(40, 30)),
+            new(new(0, 30), new(60, 30)) };
+        var cell = GridCellDetector.DetectContaining(lines, new Rect2(5, 5, 55, 10));
+        AssertEx.True(cell is not null);
+        AssertEx.Equal(new Rect2(0, 0, 60, 15), cell!.Bounds);
+        AssertEx.True(GridCellDetector.DetectContaining(lines.Take(1).ToArray(), new Rect2(5, 5, 55, 10)) is null);
+    }
+
     public static void GridLinesCreateATableCell()
     {
         LayoutRegion[] cells = GridCellDetector.Detect(
@@ -2635,6 +2751,158 @@ internal static class Tests
         AssertEx.Equal(
             1,
             NarrativeOccupancyDetector.DetectGroups(rows, medianTextHeight: 4).Length);
+    }
+
+    public static void LayoutV2AssignsEveryChangedRecordOnce()
+    {
+        LayoutV2Input[] inputs =
+        [
+            new("a", "panel", LayoutV2Kind.Narrative, new Rect2(0, 10, 20, 20), new Rect2(0, 0, 100, 50), 2, []),
+            new("b", "panel", LayoutV2Kind.Narrative, new Rect2(30, 10, 50, 20), new Rect2(0, 0, 100, 50), 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+
+        AssertEx.Equal(2, decisions.Length);
+        AssertEx.Equal(2, decisions.Select(decision => decision.RecordId).Distinct().Count());
+    }
+
+    public static void LayoutV2ClampsNarrativeBeforeRightKeepout()
+    {
+        LayoutV2Input input = new(
+            "note",
+            "panel",
+            LayoutV2Kind.Narrative,
+            new Rect2(10, 10, 85, 40),
+            new Rect2(0, 0, 100, 50),
+            2,
+            [new Rect2(80, 15, 95, 35)]);
+
+        LayoutV2Decision decision = LayoutV2Planner.Plan([input]).Single();
+
+        AssertEx.Equal(10d, decision.AllowedBounds.Left);
+        AssertEx.Equal(76d, decision.AllowedBounds.Right);
+        AssertEx.True(decision.ForceWrap);
+        AssertEx.False(decision.ManualReview);
+    }
+
+    public static void LayoutV2ClampsFixedLabelBeforeUpperKeepout()
+    {
+        LayoutV2Decision decision = LayoutV2Planner.Plan(
+        [
+            new LayoutV2Input(
+                "label",
+                "label",
+                LayoutV2Kind.FixedLabel,
+                new Rect2(10, 0, 20, 5),
+                new Rect2(0, -20, 40, 30),
+                2,
+                [new Rect2(5, 10, 25, 20)])
+        ]).Single();
+
+        AssertEx.True(decision.AllowedBounds.Contains(new Rect2(10, 0, 20, 5)));
+        AssertEx.True(decision.AllowedBounds.Top < 10);
+    }
+
+    public static void LayoutV2PartitionsFixedLabelPeers()
+    {
+        LayoutV2Input[] inputs =
+        [
+            new("left", "row", LayoutV2Kind.FixedLabel, new Rect2(0, 10, 10, 20), new Rect2(0, 0, 40, 30), 2, []),
+            new("right", "row", LayoutV2Kind.FixedLabel, new Rect2(20, 10, 30, 20), new Rect2(0, 0, 40, 30), 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+        Rect2 left = decisions.Single(decision => decision.RecordId == "left").AllowedBounds;
+        Rect2 right = decisions.Single(decision => decision.RecordId == "right").AllowedBounds;
+
+        AssertEx.True(left.Right <= right.Left);
+        AssertEx.True(left.Contains(inputs[0].SourceBounds));
+        AssertEx.True(right.Contains(inputs[1].SourceBounds));
+    }
+
+    public static void LayoutV2KeepsTableTextInsideParentCell()
+    {
+        Rect2 cell = new(0, 0, 30, 10);
+        LayoutV2Input input = new(
+            "cell",
+            "cell-1",
+            LayoutV2Kind.TableCell,
+            new Rect2(2, 2, 12, 8),
+            cell,
+            2,
+            []);
+
+        LayoutV2Decision decision = LayoutV2Planner.Plan([input]).Single();
+
+        AssertEx.True(cell.Contains(decision.AllowedBounds));
+        AssertEx.True(decision.AllowedBounds.Contains(input.SourceBounds));
+    }
+
+    public static void LayoutV2RunsOneFitAndOneAudit()
+    {
+        AssertEx.Equal(1, LayoutV2ExecutionPolicy.FitPasses);
+        AssertEx.Equal(1, LayoutV2ExecutionPolicy.AuditPasses);
+        AssertEx.False(LayoutV2ExecutionPolicy.AllowsGlobalCorrection);
+    }
+
+    public static void LayoutV2NarrativeFragmentsShareOnePanel()
+    {
+        Rect2 panel = new(0, 0, 100, 50);
+        LayoutV2Input[] inputs =
+        [
+            new("line-1", "notes", LayoutV2Kind.Narrative, new Rect2(10, 30, 40, 35), panel, 2, []),
+            new("line-2", "notes", LayoutV2Kind.Narrative, new Rect2(20, 20, 45, 25), panel, 2, [])
+        ];
+
+        LayoutV2Decision[] decisions = LayoutV2Planner.Plan(inputs);
+
+        AssertEx.Equal(decisions[0].AllowedBounds, decisions[1].AllowedBounds);
+    }
+
+    public static void LayoutV2ClassifiesLargeUnframedMTextAsNarrative()
+    {
+        AssertEx.Equal(
+            LayoutV2Kind.Narrative,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.Unassigned,
+                "AcDbMText",
+                "Notes: Lubricate per manual before startup and inspect all guards before operation.",
+                new Rect2(10, 10, 80, 30),
+                2));
+        AssertEx.Equal(
+            LayoutV2Kind.FixedLabel,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.Unassigned,
+                "AcDbMText",
+                "Drive",
+                new Rect2(10, 10, 20, 14),
+                2));
+    }
+
+    public static void LayoutV2ClassifiesLongNotesInsideSheetFrameAsNarrative()
+    {
+        AssertEx.Equal(
+            LayoutV2Kind.Narrative,
+            LayoutV2Classifier.Select(
+                LayoutRegionKind.ClosedFrame,
+                "AcDbMText",
+                "Technical Requirements: Before start-up, lubricate every rotating part and inspect all guards.",
+                new Rect2(10, 10, 80, 30),
+                2));
+    }
+
+    public static void TopologyCaptureExcludesErasedEntities()
+    {
+        AssertEx.False(TopologyCapturePolicy.ShouldCapture(isErased: true));
+        AssertEx.True(TopologyCapturePolicy.ShouldCapture(isErased: false));
+    }
+
+    public static void TopologyCaptureExcludesRegeneratedDimensionText()
+    {
+        AssertEx.False(TopologyCapturePolicy.ShouldCaptureText("*D483", hasLayoutInput: false));
+        AssertEx.True(TopologyCapturePolicy.ShouldCaptureText("*D483", hasLayoutInput: true));
+        AssertEx.True(TopologyCapturePolicy.ShouldCaptureText("*U12", hasLayoutInput: false));
     }
 
     public static void HighGeometryContactIsSoftWhenTextOverlapGateIsClear()

@@ -1,44 +1,31 @@
-# Risk-scoped visual audit
+# Source/candidate visual review
 
-Use this only when `audit-summary.json` sets `requiresVisualReview` to true. Read the compact `visual-review-targets.json`, not the full layout or logical-flow reports. Review changed, composed, or high-risk dense-note areas; do not render unchanged sheets individually.
+Automatic success is not visual acceptance. Each mode owns its receipt: `replace-visual-review.json` or `bilingual-visual-review.json`. Never reuse another mode's review.
 
-Render identical source and candidate overviews with AutoCAD Core Console, then place them in one labeled source/candidate contact sheet. Use the target windows only to create detail crops for defects that cannot be judged in the overview; do not render every target separately.
+Render matching source/candidate overviews, then detail windows for dense tables, title blocks, new bilingual labels and changed prose. Read compact layout reports to select windows; inspect both images yourself. Overview alone cannot establish small-text legibility.
 
-For a model-space window, run `accoreconsole.exe /i "<drawing>" /s "<render.scr>" /l en-US` with this script:
+Use world-space extents from actual placed instances for detail windows; block-definition local coordinates are not drawing coordinates. Verify the intended region is present and text is readable before counting an image as evidence. Empty crops, tiny whole-sheet thumbnails and cut-off titles cannot support a passed review. Correct the window rather than writing a passing receipt. Compare company names, equipment/material qualifiers and any shortened or reduced-height labels against the source. Include the final post-composition drawing, not an intermediate layout candidate.
 
-```text
-_.FILEDIA
-0
-_.CMDDIA
-0
-_.TILEMODE
-1
-_.REGENALL
-_.ZOOM
-_W
-{left},{bottom}
-{right},{top}
-_.PNGOUT
-"{absolute-output.png}"
-_ALL
-
-_.QUIT
+```powershell
+python scripts/render_review.py --drawing "source.dwg" --output "jobs/example/artifacts/source-overview.png"
+python scripts/render_review.py --drawing "jobs/example/results/candidate.dwg" --output "jobs/example/artifacts/candidate-overview.png"
+# For a detail append --window left bottom right top; use identical bounds for both images.
 ```
 
-Record only bounded results in `artifacts/large-note-panel-review.json`:
+The renderer works on a disposable copy. Do not render directly into the original DWG or send localized QUIT/save responses. Choose fresh image names; existing images are not overwritten.
+
+Replacement acceptance: accurate target-only content, readable fitting, no new overlap or crossing a cell/diagram boundary. Bilingual acceptance: unchanged readable source, translation clearly associated with its source, no new overlap, no repeated translation, unchanged non-text content. Check rotated/nested block instances individually when not covered by the overview. If any defect exists, record `failed` and create a fresh corrected job; never mark an unresolved drawing delivered.
+
+After actual inspection, write the selected receipt under that job's `artifacts`:
 
 ```json
 {
-  "schemaVersion":"1.0",
-  "status":"passed",
-  "reviewedPanelCount":2,
-  "segmentOverflowCount":0,
-  "keepOutIntrusionCount":0,
-  "shortLabelCompositionCount":0,
-  "newSevereOverlapObserved":false,
-  "tablesAndDiagramsPreserved":true,
-  "contactSheet":"source-candidate-contact-sheet.png"
+  "status": "passed",
+  "sourceSha256": "exact sourceSha256 from config/export-job.json",
+  "candidateSha256": "exact hash from the selected mode's final receipt",
+  "images": ["source-overview.png", "candidate-overview.png", "source-title.png", "candidate-title.png"],
+  "notes": "Describe inspected regions and findings."
 }
 ```
 
-Pass only when all selected columns are present, source-relative placement is preserved, tables and diagrams are intact, and prose does not enter a table, diagram, dimension block, title block, or neighboring column. Ordinary CAD contact is acceptable; any new keep-out intrusion fails.
+`images` are real paths relative to artifacts. Include source and candidate evidence. Re-run `audit-summary`; only `deliveryReady=true` is deliverable. Any changed candidate hash invalidates the previous review.

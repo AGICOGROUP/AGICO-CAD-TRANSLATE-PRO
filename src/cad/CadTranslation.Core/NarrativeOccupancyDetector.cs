@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace CadTranslation.Core;
 
@@ -13,13 +14,20 @@ public sealed record NarrativeOccupancyGroup(
     LayoutRegion Region,
     IReadOnlyList<string> MemberIds);
 
-public static class NarrativeClassificationTextPolicy
+public static partial class NarrativeClassificationTextPolicy
 {
     public static string Select(string sourceText, string candidateText)
     {
         _ = candidateText;
-        return sourceText;
+        string visible = MTextControlPattern().Replace(sourceText ?? string.Empty, string.Empty);
+        return visible
+            .Replace(@"\P", " ", StringComparison.Ordinal)
+            .Replace("{", string.Empty, StringComparison.Ordinal)
+            .Replace("}", string.Empty, StringComparison.Ordinal);
     }
+
+    [GeneratedRegex(@"\\[A-Za-z][^;]*;")]
+    private static partial Regex MTextControlPattern();
 }
 
 public static class NarrativeOccupancyDetector

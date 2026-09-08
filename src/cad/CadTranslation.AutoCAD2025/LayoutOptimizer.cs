@@ -126,7 +126,7 @@ internal static class LayoutOptimizer
         {
             DBObject value = transaction.GetObject(input.ObjectId, OpenMode.ForRead, false);
             Bounds2d? sourceBounds = value is Entity entity
-                ? CadLayoutGeometry.TryBounds(entity)
+                ? CadLayoutGeometry.TryLayoutBounds(entity)
                 : null;
             snapshots.Add(new LayoutTargetSnapshot(
                 input.ObjectId,

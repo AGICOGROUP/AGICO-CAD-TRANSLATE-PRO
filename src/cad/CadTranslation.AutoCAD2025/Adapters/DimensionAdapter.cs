@@ -7,7 +7,9 @@ internal sealed class DimensionAdapter : ITextAdapter
     public bool CanHandle(DBObject value) => value is Dimension;
     public IEnumerable<TextSlot> Read(DBObject value, AdapterContext context)
     {
-        if (value is Dimension dimension && !string.IsNullOrWhiteSpace(dimension.DimensionText) && TextSlotFactory.HasTranslatableLanguage(dimension.DimensionText))
+        // Reading is language-neutral: the verifier must still see an override
+        // after its Chinese text (or Chinese font name) has been translated.
+        if (value is Dimension dimension && !string.IsNullOrWhiteSpace(dimension.DimensionText))
             yield return TextSlotFactory.FromDimension(dimension);
     }
     public bool CanWriteSlot(DBObject value, string slot) => value is Dimension && slot == "override";

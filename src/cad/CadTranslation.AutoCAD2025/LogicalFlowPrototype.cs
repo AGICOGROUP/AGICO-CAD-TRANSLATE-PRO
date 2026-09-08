@@ -18,7 +18,9 @@ internal static partial class LogicalFlowPrototype
             throw new CommandProtocolException("missing_translation", "compose requires translationPath.");
         }
 
-        string auditPath = Path.Combine(context.Config.ArtifactDirectory, "layout-audit.json");
+        string auditPath = Path.Combine(
+            context.Config.ArtifactDirectory,
+            context.Config.OutputMode + "-layout-audit.json");
         PrototypeAuditRow[] auditRows = ReadAuditRows(auditPath);
         ManifestRecord[] manifest = ReadJsonLines<ManifestRecord>(context.Config.ManifestPath, "manifest");
         TranslationRecord[] translations = ReadJsonLines<TranslationRecord>(context.Config.TranslationPath, "translation");
@@ -74,6 +76,7 @@ internal static partial class LogicalFlowPrototype
                         translationById,
                         denseRegions,
                         reportRows);
+                    if (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase))
                     replacedRecords += ApplyBilingualFixedLabels(
                         database,
                         transaction,

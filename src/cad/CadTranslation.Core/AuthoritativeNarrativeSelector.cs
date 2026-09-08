@@ -48,7 +48,8 @@ public static class AuthoritativeNarrativeSelector
             return false;
         }
 
-        string visible = new(sourceText.Where(character => !char.IsWhiteSpace(character)).ToArray());
+        string classified = NarrativeClassificationTextPolicy.Select(sourceText, sourceText);
+        string visible = new(classified.Where(character => !char.IsWhiteSpace(character)).ToArray());
         if (visible.Length >= 10)
         {
             return true;

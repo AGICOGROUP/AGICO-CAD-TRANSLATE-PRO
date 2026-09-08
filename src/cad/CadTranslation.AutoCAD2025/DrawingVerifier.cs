@@ -13,6 +13,16 @@ internal static class DrawingVerifier
     private const string SchemaVersion = "1.0";
     private static readonly ITextAdapter[] Adapters = [new DbTextAdapter(), new MTextAdapter(), new AttributeAdapter(), new DimensionAdapter()];
 
+    internal static void VerifyStructure(JobContext context, string reportName)
+    {
+        var source = CaptureSnapshot(context.Config.WorkingPath, "source", context.Config.ArtifactDirectory);
+        var candidate = CaptureSnapshot(context.Config.OutputPath, "candidate", context.Config.ArtifactDirectory);
+        var errors = new List<CommandError>();
+        AddStructureError(source, candidate, "structure_changed", errors, ["tables", "nonText"]);
+        NativeDrawing.Report(context, reportName, new { status = errors.Count == 0 ? "passed" : "failed", errors });
+        if (errors.Count > 0) throw new CommandProtocolException("structure_changed", errors[0].Message);
+    }
+
     internal static int Verify(JobContext context)
     {
         var componentSignatures = new SortedDictionary<string, IReadOnlyDictionary<string, string>>(StringComparer.Ordinal);
@@ -44,7 +54,7 @@ internal static class DrawingVerifier
                 throw new CommandProtocolException("missing_translation", "translationPath is required for verification.");
             TranslationRecord[] translations = ReadJsonLines<TranslationRecord>(context.Config.TranslationPath, "translation");
             LayoutAuditReport layoutAudit = ReadJsonFile<LayoutAuditReport>(
-                Path.Combine(context.Config.ArtifactDirectory, "layout-audit.json"),
+                Path.Combine(context.Config.ArtifactDirectory, context.Config.OutputMode + "-layout-audit.json"),
                 "layout_audit");
             Dictionary<string, CandidateIdentityOverride> identityOverrides = layoutAudit.Texts
                 .Where(text => !string.Equals(text.OldHandle, text.NewHandle, StringComparison.OrdinalIgnoreCase))

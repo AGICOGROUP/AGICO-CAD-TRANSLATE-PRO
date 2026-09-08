@@ -22,6 +22,8 @@ internal sealed partial class JobContext
     internal JobConfig Config { get; }
     internal string JobRoot { get; }
 
+    internal JobContext Derive(JobConfig config) => new(config, JobRoot);
+
     internal static JobContext Load(string invokedOperation)
     {
         string configPath = Environment.GetEnvironmentVariable(ConfigEnvironmentVariable)
@@ -42,6 +44,7 @@ internal sealed partial class JobContext
         {
             config = JsonSerializer.Deserialize<JobConfig>(File.ReadAllText(fullConfigPath), JsonDefaults.Options)
                 ?? throw new JsonException("Configuration cannot be null.");
+            config = config with { OutputMode = OutputModePolicy.Normalize(config.OutputMode) };
         }
         catch (JsonException exception)
         {
@@ -158,7 +161,8 @@ internal sealed partial class JobContext
     private static void RequireCompleteConfig(JobConfig config, string jobRoot)
     {
         string?[] required = [config.JobId, config.Operation, config.SourcePath, config.WorkingPath, config.SourceSha256,
-            config.ManifestPath, config.OutputPath, config.ResultPath, config.ArtifactDirectory, config.SourceLanguage, config.TargetLanguage];
+            config.ManifestPath, config.OutputPath, config.ResultPath, config.ArtifactDirectory, config.SourceLanguage, config.TargetLanguage,
+            config.OutputMode];
         if (required.Any(string.IsNullOrWhiteSpace))
         {
             throw new CommandProtocolException("invalid_config", "Required configuration values must be non-empty.");

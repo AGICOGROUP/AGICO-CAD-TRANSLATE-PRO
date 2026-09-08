@@ -75,11 +75,10 @@ internal static class FixedLabelLayout
             text.WidthFactor = originalWidthFactor * scale;
             text.Height = originalHeight;
             if (CadLayoutGeometry.TryBounds(text) is Bounds2d bounds &&
-                (allowed.Contains(bounds) || TryMoveInside(text, allowed, bounds)))
+                allowed.Contains(bounds))
             {
                 widthScale = scale;
                 fits = true;
-                moved = !allowed.Contains(bounds);
                 break;
             }
         }
@@ -95,11 +94,10 @@ internal static class FixedLabelLayout
             {
                 text.Height = originalHeight * scale;
                 if (CadLayoutGeometry.TryBounds(text) is Bounds2d bounds &&
-                    (allowed.Contains(bounds) || TryMoveInside(text, allowed, bounds)))
+                    allowed.Contains(bounds))
                 {
                     heightScale = scale;
                     fits = true;
-                    moved = moved || !allowed.Contains(bounds);
                     break;
                 }
             }
@@ -108,6 +106,9 @@ internal static class FixedLabelLayout
         if (!fits &&
             CadLayoutGeometry.TryBounds(text) is Bounds2d outside)
         {
+            heightScale = LayoutFitPolicy.MinimumHeightScale;
+            text.Height = originalHeight * heightScale;
+            outside = CadLayoutGeometry.TryBounds(text) ?? outside;
             moved = TryMoveInside(text, allowed, outside);
             fits = moved;
         }

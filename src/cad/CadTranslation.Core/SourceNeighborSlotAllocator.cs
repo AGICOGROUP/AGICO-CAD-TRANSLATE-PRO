@@ -85,13 +85,11 @@ public static class SourceNeighborSlotAllocator
         Rect2 left,
         Rect2 right,
         double tolerance) =>
-        Math.Min(left.Right, right.Right) - Math.Max(left.Left, right.Left) >
-        Math.Min(left.Width, right.Width) * 0.25 - tolerance;
+        Math.Min(left.Right, right.Right) - Math.Max(left.Left, right.Left) > tolerance;
 
     private static bool VerticallyOverlaps(
         Rect2 left,
         Rect2 right,
         double tolerance) =>
-        Math.Min(left.Top, right.Top) - Math.Max(left.Bottom, right.Bottom) >
-        Math.Min(left.Height, right.Height) * 0.50 - tolerance;
+        Math.Min(left.Top, right.Top) - Math.Max(left.Bottom, right.Bottom) > tolerance;
 }
