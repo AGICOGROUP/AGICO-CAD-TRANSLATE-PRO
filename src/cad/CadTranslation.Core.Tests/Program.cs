@@ -3,6 +3,32 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("bilingual_occupancy_projects_paper_space_into_inserted_block", () => {
+        var instances = new[] {
+            new BlockInstancePath("*Paper_Space", "*Paper_Space", Transform2.Identity),
+            new BlockInstancePath("TITLE", "*Paper_Space/TITLE[10]", Transform2.Translation(300, 10)) };
+        Rect2 source = new(1100, 60, 1120, 70);
+        Rect2[] projected = InstanceOccupancyProjection.Project(source, "*Paper_Space", "TITLE", instances);
+        AssertEx.Equal(1, projected.Length);
+        AssertEx.Equal(new Rect2(800, 50, 820, 60), projected[0]);
+    }),
+    ("bilingual_table_groups_exclude_frames_and_separate_tables", () => {
+        var cells = new[] {
+            new LayoutRegion("a", LayoutRegionKind.TableCell, new Rect2(0, 0, 10, 5)),
+            new LayoutRegion("b", LayoutRegionKind.TableCell, new Rect2(0, 5, 10, 10)),
+            new LayoutRegion("isolated", LayoutRegionKind.TableCell, new Rect2(20, 0, 30, 5)),
+            new LayoutRegion("frame", LayoutRegionKind.ClosedFrame, new Rect2(-10, -10, 40, 40)) };
+        var groups = BilingualTableLayout.Groups(cells);
+        AssertEx.Equal(1, groups.Count);
+        AssertEx.Equal(2, groups[0].Length);
+        var rows = groups[0].OrderByDescending(r => r.Top).ToArray();
+        var slots = BilingualTableLayout.SideSlots(new Rect2(0, 0, 10, 10), rows, 12, .5, true);
+        AssertEx.Equal(slots[0].Left, slots[1].Left);
+        AssertEx.Equal(rows[0].Center.Y, slots[0].Center.Y);
+        AssertEx.True(slots[0].Bottom > slots[1].Top);
+        AssertEx.True(slots.All(s => s.Right < 0));
+        AssertEx.True(BilingualTableLayout.SideSlots(new Rect2(0, 0, 10, 10), rows, 12, .5, false).All(s => s.Left > 10));
+    }),
     ("sha256_is_lower_hex", Tests.Sha256IsLowerHex),
     ("atomic_write_replaces_complete_file", Tests.AtomicWriteReplacesCompleteFile),
     ("mtext_fields_and_codes_are_protected", Tests.MTextFieldsAndCodesAreProtected),
@@ -34,6 +60,10 @@ var tests = new (string Name, Action Run)[]
     ,("layout_fit_wraps_before_compressing_or_shrinking", Tests.LayoutFitWrapsBeforeCompressingOrShrinking)
     ,("layout_fit_respects_width_and_height_floors", Tests.LayoutFitRespectsWidthAndHeightFloors)
     ,("fixed_labels_never_use_emergency_ten_percent_height", Tests.FixedLabelsNeverUseEmergencyTenPercentHeight)
+    ,("bilingual_additive_labels_can_use_emergency_height_steps", Tests.BilingualAdditiveLabelsCanUseEmergencyHeightSteps)
+    ,("bilingual_dense_cell_fallback_stays_inside_cell_bottom", Tests.BilingualDenseCellFallbackStaysInsideCellBottom)
+    ,("bilingual_width_candidates_prefer_unwrapped_width_when_space_allows", Tests.BilingualWidthCandidatesPreferUnwrappedWidthWhenSpaceAllows)
+    ,("bilingual_width_candidates_keep_wrapped_options_when_single_line_does_not_fit", Tests.BilingualWidthCandidatesKeepWrappedOptionsWhenSingleLineDoesNotFit)
     ,("narrative_classifier_converts_only_long_left_aligned_dbtext", Tests.NarrativeClassifierConvertsOnlyLongLeftAlignedDbText)
     ,("layout_text_metrics_estimate_cjk_and_latin_widths", Tests.LayoutTextMetricsEstimateCjkAndLatinWidths)
     ,("layout_collision_flags_only_new_severe_overlap", Tests.LayoutCollisionFlagsOnlyNewSevereOverlap)
@@ -166,6 +196,36 @@ return TestRunner.Run(tests);
 
 internal static class Tests
 {
+    public static void BilingualAdditiveLabelsCanUseEmergencyHeightSteps()
+    {
+        double[] steps = BilingualPlacementPolicy.HeightScales.ToArray();
+        AssertEx.Equal(.45, steps[0]);
+        AssertEx.True(steps.SequenceEqual(steps.OrderByDescending(value => value)));
+        AssertEx.Contains(LayoutFitPolicy.EmergencyMinimumHeightScale, steps);
+    }
+
+    public static void BilingualDenseCellFallbackStaysInsideCellBottom()
+    {
+        Rect2 result = BilingualPlacementPolicy.PlaceAtCellBottom(new Rect2(10, 20, 17, 25), 2, .4, .1);
+        AssertEx.True(new Rect2(10, 20, 17, 25).Contains(result, 1e-9));
+        AssertEx.Equal(20.1, result.Bottom);
+        AssertEx.Equal(20.5, result.Top);
+    }
+
+    public static void BilingualWidthCandidatesPreferUnwrappedWidthWhenSpaceAllows()
+    {
+        double[] widths = BilingualPlacementPolicy.CandidateWidths(20, 4, 2, 10).ToArray();
+        AssertEx.Equal(10.0, widths[0]);
+    }
+
+    public static void BilingualWidthCandidatesKeepWrappedOptionsWhenSingleLineDoesNotFit()
+    {
+        double[] widths = BilingualPlacementPolicy.CandidateWidths(12, 4, 2, 18).ToArray();
+        AssertEx.False(widths.Contains(18.0));
+        AssertEx.True(widths.All(width => width <= 12));
+        AssertEx.True(widths.Length > 0);
+    }
+
     public static void AuthoritativeNoteSelectorSplitsNeighboringProseColumns()
     {
         var samples = new List<FragmentedNarrativeSample>();

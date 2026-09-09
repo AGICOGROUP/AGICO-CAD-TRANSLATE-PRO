@@ -100,6 +100,18 @@ public readonly record struct Transform2(
             corners.Max(point => point.X),
             corners.Max(point => point.Y));
     }
+
+    public bool TryInverse(out Transform2 inverse)
+    {
+        double determinant = M11 * M22 - M12 * M21;
+        if (Math.Abs(determinant) < 1e-12) { inverse = default; return false; }
+        double a = M22 / determinant, b = -M12 / determinant;
+        double c = -M21 / determinant, d = M11 / determinant;
+        inverse = new Transform2(a, b, c, d,
+            -(a * TranslationX + b * TranslationY),
+            -(c * TranslationX + d * TranslationY));
+        return true;
+    }
 }
 
 public static class TextBoundsEstimator

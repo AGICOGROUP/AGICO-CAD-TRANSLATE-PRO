@@ -14,7 +14,7 @@ python scripts/render_review.py --drawing "jobs/example/results/candidate.dwg" -
 
 The renderer works on a disposable copy. Do not render directly into the original DWG or send localized QUIT/save responses. Choose fresh image names; existing images are not overwritten.
 
-Replacement acceptance: accurate target-only content, readable fitting, no new overlap or crossing a cell/diagram boundary. Bilingual acceptance: unchanged readable source, translation clearly associated with its source, no new overlap, no repeated translation, unchanged non-text content. Check rotated/nested block instances individually when not covered by the overview. If any defect exists, record `failed` and create a fresh corrected job; never mark an unresolved drawing delivered.
+Replacement acceptance: accurate target-only content, readable fitting, no new overlap or crossing a cell/diagram boundary. Bilingual acceptance: unchanged readable source, translation clearly associated with its source, no new overlap, no repeated translation, unchanged non-text content. Short target labels must remain single-line when their measured width fits available whitespace; wrapping remains valid when a safe single line does not fit. Check rotated/nested block instances individually when not covered by the overview. If any defect exists, record `failed` and create a fresh corrected job; never mark an unresolved drawing delivered.
 
 After actual inspection, write the selected receipt under that job's `artifacts`:
 

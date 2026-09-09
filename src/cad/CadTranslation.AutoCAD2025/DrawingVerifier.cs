@@ -216,7 +216,11 @@ internal static class DrawingVerifier
         foreach (ObjectId id in table)
         {
             var record = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
-            entries.Add($"{record.Name}|{record.Handle}|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}");
+            // AutoCAD may renumber anonymous dynamic blocks (*D...) while saving a drawing that has
+            // an unresolved XREF. Their generated name and handle are not stable structure identities.
+            entries.Add(record.Name.StartsWith("*D", StringComparison.OrdinalIgnoreCase)
+                ? $"<anonymous-dynamic>|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}"
+                : $"{record.Name}|{record.Handle}|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}");
         }
         rows.Add($"table|blocks|count={entries.Count}");
         rows.Add($"table|xrefs|count={entries.Count(entry => entry.Contains("xref=True", StringComparison.Ordinal))}");

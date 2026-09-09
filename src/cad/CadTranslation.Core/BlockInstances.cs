@@ -76,3 +76,26 @@ public static class BlockInstanceExpander
         }
     }
 }
+
+public static class InstanceOccupancyProjection
+{
+    public static Rect2[] Project(Rect2 bounds, string sourceDefinition, string targetDefinition,
+        IReadOnlyList<BlockInstancePath> instances)
+    {
+        if (sourceDefinition == targetDefinition) return [];
+        var result = new List<Rect2>();
+        foreach (BlockInstancePath source in instances.Where(i => i.DefinitionId == sourceDefinition))
+        foreach (BlockInstancePath target in instances.Where(i => i.DefinitionId == targetDefinition && Root(i.Path) == Root(source.Path)))
+        {
+            if (!target.WorldTransform.TryInverse(out Transform2 inverse)) continue;
+            result.Add(inverse.Apply(source.WorldTransform.Apply(bounds)));
+        }
+        return result.Distinct().ToArray();
+    }
+
+    private static string Root(string path)
+    {
+        int separator = path.IndexOf('/');
+        return separator < 0 ? path : path[..separator];
+    }
+}

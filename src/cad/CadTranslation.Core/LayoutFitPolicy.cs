@@ -141,6 +141,35 @@ public static class LayoutFitPolicy
     }
 }
 
+public static class BilingualPlacementPolicy
+{
+    public static IReadOnlyList<double> HeightScales { get; } =
+        [.45, .35, .30, .25, .20, .15, LayoutFitPolicy.EmergencyMinimumHeightScale];
+
+    public static Rect2 PlaceAtCellBottom(Rect2 cell, double width, double height, double margin)
+    {
+        double left = Math.Clamp(cell.Center.X - width / 2, cell.Left + margin, cell.Right - margin - width);
+        return new Rect2(left, cell.Bottom + margin, left + width, cell.Bottom + margin + height);
+    }
+
+    public static IReadOnlyList<double> CandidateWidths(
+        double allowedWidth,
+        double sourceWidth,
+        double textHeight,
+        double unwrappedWidth)
+    {
+        if (allowedWidth <= 0 || sourceWidth <= 0 || textHeight <= 0 || unwrappedWidth <= 0)
+            throw new ArgumentOutOfRangeException(nameof(allowedWidth));
+
+        var widths = new List<double>();
+        if (unwrappedWidth <= allowedWidth)
+            widths.Add(unwrappedWidth);
+        widths.Add(Math.Min(allowedWidth, Math.Max(sourceWidth, textHeight * 4)));
+        widths.Add(Math.Min(allowedWidth, Math.Max(sourceWidth * 1.6, textHeight * 8)));
+        return widths.Distinct().ToArray();
+    }
+}
+
 public sealed record LayoutTextProfile(string ObjectType, string HorizontalMode, string Text);
 
 public static partial class NarrativeTextClassifier

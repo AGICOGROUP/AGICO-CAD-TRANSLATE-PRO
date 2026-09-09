@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from cad_translate import discover_autocad, terminate_process_tree
 
-def render(drawing, output, window=None, timeout=60):
+def render(drawing, output, window=None, timeout=60, paper=False):
     drawing, output = drawing.resolve(), output.resolve()
     if not drawing.is_file(): raise FileNotFoundError(drawing)
     if output.exists(): raise FileExistsError(output)
@@ -19,7 +19,7 @@ def render(drawing, output, window=None, timeout=60):
     shutil.copy2(drawing, render_input)
     script = output.with_suffix(".scr")
     zoom = "_E\n" if window is None else f"_W\n{window[0]},{window[1]}\n{window[2]},{window[3]}\n"
-    script.write_text('_.FILEDIA\n0\n_.CMDDIA\n0\n_.TILEMODE\n1\n_.REGENALL\n_.ZOOM\n' + zoom +
+    script.write_text(f'_.FILEDIA\n0\n_.CMDDIA\n0\n_.TILEMODE\n{0 if paper else 1}\n_.REGENALL\n_.ZOOM\n' + zoom +
         '_.PNGOUT\n"' + output.as_posix() + '"\n_ALL\n\n', encoding="utf-8")
     started = time.monotonic()
     with output.with_suffix(".log").open("wb") as log:
@@ -41,5 +41,6 @@ if __name__ == "__main__":
     parser.add_argument("--drawing", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--window", type=float, nargs=4)
+    parser.add_argument("--paper", action="store_true")
     args = parser.parse_args()
-    print(render(args.drawing, args.output, args.window))
+    print(render(args.drawing, args.output, args.window, paper=args.paper))

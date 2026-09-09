@@ -12,6 +12,7 @@ def language(value):
     value = value.lower().strip()
     if value in {"zh", "zh-cn", "zh-hans"}: return "zh"
     if value in {"en", "en-us", "en-gb"}: return "en"
+    if value in {"es", "es-es", "es-mx", "es-419"}: return "es"
     raise ValueError(f"Unsupported language: {value}")
 
 def direction(job):

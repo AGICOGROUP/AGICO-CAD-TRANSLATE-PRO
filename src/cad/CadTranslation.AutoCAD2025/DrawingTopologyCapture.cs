@@ -361,6 +361,15 @@ internal static class DrawingTopologyCapture
                         AttachmentPoint.MiddleLeft or
                         AttachmentPoint.BottomLeft);
                 return true;
+            case Dimension dimension when input is not null:
+                DimStyleTableRecord style = dimension.GetDimstyleData();
+                double dimHeight = Math.Max(style.Dimtxt * Math.Max(dimension.Dimscale, 1), 1e-6);
+                Point3d position = dimension.TextPosition;
+                Rect2 dimBounds = TextBoundsEstimator.Estimate(new Point2(position.X, position.Y), dimHeight, 1,
+                    input.Manifest.PlainText, "TextCenter", "TextVerticalMid", input.Manifest.Geometry.RotationRadians);
+                text = (entity.ObjectId, recordId, entity.GetRXClass().Name, input.Manifest.RawText, candidate,
+                    input.IsChanged, new TextLayoutSnapshot(recordId, dimBounds, new Point2(position.X, position.Y), dimHeight), false);
+                return true;
             case Entity value when input is not null && bounds is not null:
                 text = (
                     value.ObjectId,
