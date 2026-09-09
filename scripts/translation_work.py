@@ -26,6 +26,14 @@ def visible(text):
     return text.replace("\\P", " ").replace("\\", " ").strip(" {};")
 
 def needs_translation(record, source_language):
+    raw = re.sub(r"\\[Ff][^;]*;", "", str(record.get("rawText", "")))
+    legacy_chinese = source_language == "zh" or "|c134" in str(record.get("rawText", ""))
+    if "\ufffd" in raw or (legacy_chinese and re.search(r"[\u0080-\u00ff]\?|\?[\u0080-\u00ff]", raw)):
+        raise ValueError(
+            f"Unresolved text encoding: handle={record.get('handle', '?')}, "
+            f"recordId={record.get('recordId', '?')}. Verify SHX/bigfont and "
+            "re-extract readable source text before translation; do not pass through or guess."
+        )
     text = visible(str(record.get("plainText", "")))
     return bool((CJK if source_language == "zh" else LATIN).search(text))
 

@@ -12,7 +12,7 @@ namespace CadTranslation.AutoCAD2025;
 internal static class BilingualDrawingImporter
 {
     internal sealed record Pair(string RecordId, string SourceHandle, string TargetHandle,
-        string TargetText, string Decision, string DefinitionName, Rect2 Bounds, double HeightScale);
+        string TargetText, string Decision, string DefinitionName, Rect2 Bounds, double HeightScale, string PlacementStrategy = "nearby");
 
     internal static int Run(JobContext context)
     {
@@ -25,6 +25,8 @@ internal static class BilingualDrawingImporter
         var pairs = new List<Pair>();
         var unresolved = new List<string>();
         var unresolvedDetails = new List<object>();
+        var tableCopies = new List<BilingualTableCopy.CopyReceipt>();
+        var tableDecisions = new List<object>();
         string output = context.Config.OutputPath;
         if (Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.SourcePath), StringComparison.OrdinalIgnoreCase) ||
             Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.WorkingPath), StringComparison.OrdinalIgnoreCase))
@@ -65,13 +67,15 @@ internal static class BilingualDrawingImporter
                 foreach (var item in baseline.Definitions.SelectMany(d => d.Texts.Select(t => (Definition: d.Name, Bounds: t.Source.Bounds))).ToArray())
                     ReserveProjected(occupied, item.Definition, item.Bounds, baseline.BlockInstances, includeLocal: false);
                 var rowsByHandle = manifest.ToDictionary(r => r.Handle, StringComparer.OrdinalIgnoreCase);
-                var tableSlots = PlanTableSlots(db, tx, baseline, inputs, context.Config.TargetLanguage);
+                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs, occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions);
+                var tableSlots = PlanTableSlots(db, tx, baseline, inputs.Where(i => !copied.Contains(i.Manifest.RecordId)).ToArray(), context.Config.TargetLanguage);
                 foreach (var planned in tableSlots)
                     ReserveProjected(occupied, topology[planned.Key].DefinitionName, planned.Value.Slot, baseline.BlockInstances);
 
                 foreach (var input in inputs)
                 {
                     var row = input.Manifest;
+                    if (copied.Contains(row.RecordId)) continue;
                     if (translated[row.RecordId].TranslatedText == row.PlainText) continue;
                     if (!topology.TryGetValue(row.RecordId, out var source)) { unresolved.Add(row.RecordId); continue; }
                     var original = (Entity)tx.GetObject(input.ObjectId, OpenMode.ForRead);
@@ -124,7 +128,7 @@ internal static class BilingualDrawingImporter
                     owner.AppendEntity(added);
                     tx.AddNewlyCreatedDBObject(added, true);
                     ReserveProjected(occupied, source.DefinitionName, bounds, baseline.BlockInstances);
-                    pairs.Add(new(row.RecordId, row.Handle, added.Handle.ToString(), targetText, "added", source.DefinitionName, bounds, scale));
+                    pairs.Add(new(row.RecordId, row.Handle, added.Handle.ToString(), targetText, "added", source.DefinitionName, bounds, scale, inTable ? "table-side-column" : "cell-local-or-nearby"));
                 }
                 tx.Commit();
                 NativeDrawing.Save(db, output);
@@ -143,7 +147,9 @@ internal static class BilingualDrawingImporter
                 : !SourcePreserved(r, current)).Select(r => r.RecordId).ToArray();
         var missingTargets = pairs.Where(p => !candidateByHandle.TryGetValue(p.TargetHandle, out var target) ||
             !Normalize(Plain(target.RawText)).Contains(Normalize(p.TargetText), StringComparison.OrdinalIgnoreCase)).Select(p => p.RecordId).ToArray();
-        DrawingVerifier.VerifyStructure(context, "bilingual-structure.json");
+        BilingualTableCopy.Verify(context, tableCopies);
+        DrawingVerifier.VerifyStructure(context, "bilingual-structure.json", tableCopies.Select(c => c.TargetHandle).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        NativeDrawing.Report(context, "bilingual-table-layout.json", new { tables = tableDecisions, copies = tableCopies });
         bool passed = changedSources.Length == 0 && missingTargets.Length == 0 && unresolved.Count == 0;
         NativeDrawing.Report(context, "bilingual-native-check.json", new { status = passed ? "passed" : "failed", outputMode = "bilingual",
             sourceRetainedCount = manifest.Length - changedSources.Length, changedSources, missingTargets, unresolved,

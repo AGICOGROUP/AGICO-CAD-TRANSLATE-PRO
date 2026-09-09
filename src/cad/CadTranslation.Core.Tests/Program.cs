@@ -3,6 +3,26 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("equipment_codes_are_not_embedded_english_translations", () => {
+        foreach (string source in new[] {
+            "{\\Fisocp,hztxt|c134;MDPX150模块化破碎站（主视图）}",
+            "HCQ2000磨粉机", "ABCD-123设备", "150TPH石灰石破碎筛分模块",
+            "{\\FEnglishFont|c134;中文设备说明}" })
+        {
+            var selection = BilingualFixedLabelPolicy.Select(new[] {
+                new BilingualFixedLabelSample("label", source,
+                    "MDPX150 Modular Crushing Plant (Front View)", "AcDbMText", "model",
+                    new Rect2(0, 0, 100, 10), 10) });
+            AssertEx.Equal(0, selection.MixedObjectEnglishTextById.Count);
+            AssertEx.Equal(0, selection.SuppressChineseIds.Count);
+        }
+    }),
+    ("equipment_title_with_real_english_keeps_complete_english", () => {
+        var selection = BilingualFixedLabelPolicy.Select(new[] {
+            new BilingualFixedLabelSample("label", "MDPX150 破碎站 Crushing Plant",
+                "MDPX150 Crushing Plant", "AcDbMText", "model", new Rect2(0, 0, 100, 10), 10) });
+        AssertEx.Equal("MDPX150 Crushing Plant", selection.MixedObjectEnglishTextById["label"]);
+    }),
     ("bilingual_occupancy_projects_paper_space_into_inserted_block", () => {
         var instances = new[] {
             new BlockInstancePath("*Paper_Space", "*Paper_Space", Transform2.Identity),

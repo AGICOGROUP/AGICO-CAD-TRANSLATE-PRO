@@ -28,56 +28,62 @@ internal static class ReplaceDrawingImporter
             throw new CommandProtocolException("invalid_translation_batch", string.Join("; ", validation.Errors.Select(error => error.Code)));
 
         string temporaryOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
+        string auditOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
         ResolvedWrite[] resolved;
         ResolvedWrite[] changed;
         LayoutOptimizationResult layoutResult;
         CadLayoutBaseline layoutBaseline;
         LayoutAuditReport layoutAudit;
+        string stage = "resolve-inputs";
         try
         {
-            using (var sideDatabase = new Database(false, true))
+            // The runner opens the owned working copy before invoking this command.
+            // Re-reading legacy DWGs into a side database can decode Chinese SHX text
+            // with the host ANSI code page and corrupt the input before translation.
+            Database workingDatabase = HostApplicationServices.WorkingDatabase;
+            using Autodesk.AutoCAD.ApplicationServices.DocumentLock documentLock =
+                Autodesk.AutoCAD.ApplicationServices.Core.Application.DocumentManager.MdiActiveDocument.LockDocument();
+            var translationsById = translations.ToDictionary(record => record.RecordId, StringComparer.Ordinal);
+            resolved = ResolveAll(workingDatabase, manifest, translationsById, context.Config.SourceSha256);
+            stage = "capture-and-write";
+            using (Transaction transaction = workingDatabase.TransactionManager.StartTransaction())
             {
-                ReadWorkingDrawing(sideDatabase, context.Config.WorkingPath, context.Config.ArtifactDirectory);
-                Database originalWorkingDatabase = HostApplicationServices.WorkingDatabase;
-                try
+                var suppressed = new HashSet<string>(StringComparer.Ordinal);
+                changed = resolved.Where(write => ImportWriteDecision.NeedsWrite(write.CurrentRawText, write.RestoredText)).ToArray();
+                LayoutWriteInput[] layoutInputs = resolved
+                    .Where(write => !suppressed.Contains(write.Manifest.RecordId))
+                    .Select(write => new LayoutWriteInput(
+                        write.ObjectId,
+                        write.Manifest,
+                        write.RestoredText,
+                        ImportWriteDecision.NeedsLayout(
+                            write.Manifest.PlainText,
+                            translationsById[write.Manifest.RecordId].TranslatedText)))
+                    .ToArray();
+                stage = "capture-topology";
+                layoutBaseline = DrawingTopologyCapture.Capture(workingDatabase, transaction, layoutInputs);
+                stage = "capture-layout-targets";
+                LayoutTargetSnapshot[] layoutTargets = LayoutOptimizer.Capture(transaction, layoutInputs);
+                stage = "write-translations";
+                foreach (ResolvedWrite write in changed.Where(write => !suppressed.Contains(write.Manifest.RecordId)))
                 {
-                    HostApplicationServices.WorkingDatabase = sideDatabase;
-                    var translationsById = translations.ToDictionary(record => record.RecordId, StringComparer.Ordinal);
-                    resolved = ResolveAll(sideDatabase, manifest, translationsById, context.Config.SourceSha256);
-                    using (Transaction transaction = sideDatabase.TransactionManager.StartTransaction())
-                    {
-                        var suppressed = new HashSet<string>(StringComparer.Ordinal);
-                        changed = resolved.Where(write => ImportWriteDecision.NeedsWrite(write.CurrentRawText, write.RestoredText)).ToArray();
-                        LayoutWriteInput[] layoutInputs = resolved
-                            .Where(write => !suppressed.Contains(write.Manifest.RecordId))
-                            .Select(write => new LayoutWriteInput(
-                                write.ObjectId,
-                                write.Manifest,
-                                write.RestoredText,
-                                ImportWriteDecision.NeedsLayout(
-                                    write.Manifest.PlainText,
-                                    translationsById[write.Manifest.RecordId].TranslatedText)))
-                            .ToArray();
-                        layoutBaseline = DrawingTopologyCapture.Capture(sideDatabase, transaction, layoutInputs);
-                        LayoutTargetSnapshot[] layoutTargets = LayoutOptimizer.Capture(transaction, layoutInputs);
-                        foreach (ResolvedWrite write in changed.Where(write => !suppressed.Contains(write.Manifest.RecordId)))
-                        {
-                            DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false);
-                            write.Adapter.Write(value, write.Manifest.Slot, write.RestoredText);
-                        }
-                        layoutResult = ReplaceImportPipeline.Optimize(sideDatabase, transaction, layoutTargets, layoutBaseline);
-                        transaction.Commit();
-                    }
-                    SaveTemporaryOutput(sideDatabase, temporaryOutput, Path.GetExtension(context.Config.WorkingPath));
+                    DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false);
+                    write.Adapter.Write(value, write.Manifest.Slot, write.RestoredText);
                 }
-                finally
-                {
-                    HostApplicationServices.WorkingDatabase = originalWorkingDatabase;
-                }
+                stage = "optimize-layout";
+                layoutResult = ReplaceImportPipeline.Optimize(workingDatabase, transaction, layoutTargets, layoutBaseline);
+                stage = "commit-translations";
+                transaction.Commit();
             }
+            stage = "save-candidate";
+            SaveTemporaryOutput(workingDatabase, temporaryOutput, Path.GetExtension(context.Config.WorkingPath));
+            // SaveAs keeps the active document's file open. Audit an identical,
+            // independently copied DWG so reopening and final delivery are not blocked.
+            File.Copy(temporaryOutput, auditOutput, overwrite: true);
 
+            stage = "audit-candidate";
             layoutAudit = AuditTemporaryOutput(
-                temporaryOutput,
+                auditOutput,
                 Path.GetExtension(context.Config.WorkingPath),
                 layoutBaseline,
                 layoutResult,
@@ -94,7 +100,7 @@ internal static class ReplaceDrawingImporter
                     overwrite: true);
             }
             ReplaceImportGate.EnsurePassed(layoutResult, layoutAudit);
-            File.Move(temporaryOutput, context.Config.OutputPath, overwrite: true);
+            File.Copy(temporaryOutput, context.Config.OutputPath, overwrite: true);
             AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "import-summary.json"), JsonSerializer.Serialize(new
             {
                 processedRecords = resolved.Length,
@@ -136,9 +142,14 @@ internal static class ReplaceDrawingImporter
             context.VerifySourceAndWorkingHashes();
             return resolved.Length;
         }
+        catch (System.Exception exception) when (exception is not CommandProtocolException)
+        {
+            throw new CommandProtocolException("replace_import_stage_failed", $"{stage}: {exception.GetType().Name}: {exception.Message}", exception);
+        }
         finally
         {
-            if (File.Exists(temporaryOutput)) File.Delete(temporaryOutput);
+            TryDeleteTemporary(auditOutput);
+            TryDeleteTemporary(temporaryOutput);
         }
     }
 
@@ -220,6 +231,12 @@ internal static class ReplaceDrawingImporter
     private static string CreateSiblingTemporaryPath(string outputPath) => Path.Combine(
         Path.GetDirectoryName(outputPath) ?? throw new CommandProtocolException("invalid_output_path", "outputPath requires a parent directory."),
         $".{Path.GetFileNameWithoutExtension(outputPath)}.{Guid.NewGuid():N}.tmp{Path.GetExtension(outputPath)}");
+
+    private static void TryDeleteTemporary(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { /* AutoCAD releases its SaveAs file when the runner exits. */ }
+    }
 
     private static void ReadWorkingDrawing(Database database, string path, string artifactDirectory)
     {

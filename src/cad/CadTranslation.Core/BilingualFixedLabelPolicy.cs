@@ -237,8 +237,9 @@ public static partial class BilingualFixedLabelPolicy
         // Font names such as "MS PGothic" live inside MText control codes and
         // are not visible bilingual content. Classify only the visible text.
         string visible = MTextControlPattern().Replace(value ?? string.Empty, " ");
-        string[] tokens = LatinTokens(visible);
-        return tokens.Any(token => token.Length >= 4);
+        // MDPX150 / ABCD-123 are equipment codes, not an English translation.
+        // Do not strip Chinese from an already translated entity on that evidence.
+        return MeaningfulEnglishWordPattern().IsMatch(visible);
     }
 
     private static bool ContainsCjk(string value) => value.Any(IsCjk);
@@ -247,6 +248,9 @@ public static partial class BilingualFixedLabelPolicy
 
     [GeneratedRegex(@"[A-Za-z]+")]
     private static partial Regex LatinWordPattern();
+
+    [GeneratedRegex(@"(?<![A-Za-z0-9_.-])[A-Za-z]{4,}(?![A-Za-z0-9_.-])")]
+    private static partial Regex MeaningfulEnglishWordPattern();
 
     [GeneratedRegex(@"\\[A-Za-z][^;]*;")]
     private static partial Regex MTextControlPattern();

@@ -28,6 +28,13 @@ internal static class BlockInstanceWalker
                     continue;
                 }
 
+                // Legacy/proxy objects may expose an unresolved block reference.
+                // It has no usable topology and must not abort translation of the drawing.
+                if (reference.BlockTableRecord.IsNull)
+                {
+                    continue;
+                }
+
                 var target = (BlockTableRecord)transaction.GetObject(reference.BlockTableRecord, OpenMode.ForRead);
                 if (target.IsFromExternalReference || target.IsFromOverlayReference)
                 {
@@ -47,6 +54,10 @@ internal static class BlockInstanceWalker
         foreach (DBDictionaryEntry entry in layouts)
         {
             var layout = (Layout)transaction.GetObject(entry.Value, OpenMode.ForRead);
+            if (layout.BlockTableRecordId.IsNull)
+            {
+                continue;
+            }
             var root = (BlockTableRecord)transaction.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
             if (definitions.ContainsKey(root.Name))
             {

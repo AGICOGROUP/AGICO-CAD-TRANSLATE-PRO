@@ -331,6 +331,28 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertEqual(["raw"], report["rawTextChineseResidualRecordIds"])
             self.assertTrue(report_path.is_file())
 
+    def test_postcomposition_language_check_ignores_chinese_mtext_font_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.jsonl"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "recordId": "font",
+                        "plainText": "1",
+                        "rawText": r"{\f仿宋_GB2312|b0|i0|c134|p49;1}",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = cad_translate.check_exported_candidate_language(manifest, root / "report.json")
+
+            self.assertEqual("passed", report["status"])
+            self.assertEqual([], report["rawTextChineseResidualRecordIds"])
+
     def test_candidate_language_gate_ignores_punctuation_only_but_rejects_extension_b(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

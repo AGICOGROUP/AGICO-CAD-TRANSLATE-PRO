@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Autodesk.AutoCAD.DatabaseServices;
 using CadTranslation.AutoCAD2025.Adapters;
 using CadTranslation.Contracts;
@@ -13,10 +14,10 @@ internal static class DrawingVerifier
     private const string SchemaVersion = "1.0";
     private static readonly ITextAdapter[] Adapters = [new DbTextAdapter(), new MTextAdapter(), new AttributeAdapter(), new DimensionAdapter()];
 
-    internal static void VerifyStructure(JobContext context, string reportName)
+    internal static void VerifyStructure(JobContext context, string reportName, IReadOnlySet<string>? verifiedAdditions = null)
     {
         var source = CaptureSnapshot(context.Config.WorkingPath, "source", context.Config.ArtifactDirectory);
-        var candidate = CaptureSnapshot(context.Config.OutputPath, "candidate", context.Config.ArtifactDirectory);
+        var candidate = CaptureSnapshot(context.Config.OutputPath, "candidate", context.Config.ArtifactDirectory, verifiedAdditions);
         var errors = new List<CommandError>();
         AddStructureError(source, candidate, "structure_changed", errors, ["tables", "nonText"]);
         NativeDrawing.Report(context, reportName, new { status = errors.Count == 0 ? "passed" : "failed", errors });
@@ -140,7 +141,7 @@ internal static class DrawingVerifier
         return result.ToArray();
     }
 
-    private static DrawingStructureSnapshot CaptureSnapshot(string path, string label, string artifactDirectory)
+    private static DrawingStructureSnapshot CaptureSnapshot(string path, string label, string artifactDirectory, IReadOnlySet<string>? verifiedAdditions = null)
     {
         using var database = new Database(false, true);
         ReadDrawing(database, path, artifactDirectory);
@@ -154,7 +155,7 @@ internal static class DrawingVerifier
         AddSymbolTable(tableRows, transaction, database.DimStyleTableId, "dimensionStyles");
         AddBlocks(tableRows, transaction, database.BlockTableId);
         AddLayouts(tableRows, transaction, database.LayoutDictionaryId);
-        AddEntityStructure(nonTextRows, textEntities, database, transaction);
+        AddEntityStructure(nonTextRows, textEntities, database, transaction, verifiedAdditions);
         transaction.Commit();
         var rows = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
@@ -220,7 +221,9 @@ internal static class DrawingVerifier
             // an unresolved XREF. Their generated name and handle are not stable structure identities.
             entries.Add(record.Name.StartsWith("*D", StringComparison.OrdinalIgnoreCase)
                 ? $"<anonymous-dynamic>|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}"
-                : $"{record.Name}|{record.Handle}|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}");
+                : record.IsAnonymous
+                    ? $"<anonymous-block>|{record.Handle}|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}"
+                    : $"{record.Name}|{record.Handle}|xref={record.IsFromExternalReference}|overlay={record.IsFromOverlayReference}");
         }
         rows.Add($"table|blocks|count={entries.Count}");
         rows.Add($"table|xrefs|count={entries.Count(entry => entry.Contains("xref=True", StringComparison.Ordinal))}");
@@ -240,12 +243,14 @@ internal static class DrawingVerifier
         foreach (string entry in entries.OrderBy(entry => entry, StringComparer.Ordinal)) rows.Add($"table|layouts|{entry}");
     }
 
-    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction)
+    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction, IReadOnlySet<string>? verifiedAdditions = null)
     {
         foreach (WalkItem item in EntityWalker.Walk(database, transaction))
         {
             if (item.Value is not Entity entity) continue;
-            TextStructureSignature? textSignature = TextSignature(entity, item.OwnerPath);
+            if (verifiedAdditions?.Contains(entity.Handle.ToString()) == true) continue;
+            string stableOwnerPath = StableOwnerPath(item.OwnerPath);
+            TextStructureSignature? textSignature = TextSignature(entity, stableOwnerPath);
             if (textSignature is not null)
             {
                 textEntities.Add(textSignature);
@@ -254,7 +259,7 @@ internal static class DrawingVerifier
             string stablePlacement = entity is BlockReference reference
                 ? BlockReferencePlacement(reference)
                 : string.Empty;
-            rows.Add(string.Join("|", "entity", entity.Handle, entity.GetRXClass().Name, item.OwnerPath, entity.Layer,
+            rows.Add(string.Join("|", "entity", entity.Handle, entity.GetRXClass().Name, stableOwnerPath, entity.Layer,
                 entity.ColorIndex.ToString(CultureInfo.InvariantCulture), entity.LineWeight.ToString(),
                 NonTextStructureSignaturePolicy.GeometryToken(
                     entity.GetRXClass().Name,
@@ -310,16 +315,19 @@ internal static class DrawingVerifier
 
     private static string Point(Autodesk.AutoCAD.Geometry.Point3d value) => string.Join(",", Number(value.X), Number(value.Y), Number(value.Z));
     private static string Point(Autodesk.AutoCAD.Geometry.Vector3d value) => string.Join(",", Number(value.X), Number(value.Y), Number(value.Z));
-    private static string Number(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+    // Legacy DWG SaveAs may change only the last binary floating-point digits.
+    // Nanounit quantization rejects real geometry edits while ignoring serialization noise.
+    private static string Number(double value) => Math.Round(value, 9).ToString("R", CultureInfo.InvariantCulture);
+    private static string StableOwnerPath(string value) => Regex.Replace(
+        value, @"/\*[A-Z][0-9A-F]+/", "/<anonymous-block>/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static string Extents(Entity entity)
     {
         try
         {
             Extents3d extents = entity.GeometricExtents;
-            return string.Join(",", extents.MinPoint.X.ToString("R", CultureInfo.InvariantCulture), extents.MinPoint.Y.ToString("R", CultureInfo.InvariantCulture),
-                extents.MinPoint.Z.ToString("R", CultureInfo.InvariantCulture), extents.MaxPoint.X.ToString("R", CultureInfo.InvariantCulture),
-                extents.MaxPoint.Y.ToString("R", CultureInfo.InvariantCulture), extents.MaxPoint.Z.ToString("R", CultureInfo.InvariantCulture));
+            return string.Join(",", Number(extents.MinPoint.X), Number(extents.MinPoint.Y), Number(extents.MinPoint.Z),
+                Number(extents.MaxPoint.X), Number(extents.MaxPoint.Y), Number(extents.MaxPoint.Z));
         }
         catch (Autodesk.AutoCAD.Runtime.Exception)
         {

@@ -1,6 +1,6 @@
 # Source/candidate visual review
 
-Automatic success is not visual acceptance. Each mode owns its receipt: `replace-visual-review.json` or `bilingual-visual-review.json`. Never reuse another mode's review.
+Automatic success is not visual acceptance. Each mode owns its receipt: `replace-visual-review.json` or `bilingual-visual-review.json`. Never reuse another mode's review. For bilingual tables, inspect `bilingual-table-layout.json`: verify that multi-column schedules used a full-size target-language copy when space allowed, with all outer/grid borders present, original row/column geometry retained and readable target text. Check recorded fallback reasons against the actual drawing; source retention alone does not establish acceptable table layout.
 
 Render matching source/candidate overviews, then detail windows for dense tables, title blocks, new bilingual labels and changed prose. Read compact layout reports to select windows; inspect both images yourself. Overview alone cannot establish small-text legibility.
 

@@ -7,7 +7,7 @@ description: Use when translating DWG or DXF engineering drawings between Chines
 
 Resolve the user's requested output mode and language direction before creating a job. Default to replacement for “英文版 / 中文版 / 翻译成… / 替换”. Select bilingual for “双语 / 中英对照 / 保留原文加翻译”. Ask only if those requests conflict. Never infer a mode from an old job, branch name or input filename.
 
-- `replace`: read [replacement workflow](references/replace-workflow.md).
+- `replace`: read [replacement workflow](references/replace-workflow.md), including full-text preservation and local whitespace correction for post-composition word loss, overlaps or unsuitable wrapping.
 - `bilingual`: read [bilingual workflow](references/bilingual-workflow.md).
 
 Each branch owns its importer, placement policy, preflight, final verification and visual review. They share only neutral host/file transport and translation batching. Never switch a sealed job's mode or direction. Existing 1.0 jobs are historical evidence, not reusable V2 jobs.
@@ -16,7 +16,7 @@ Each branch owns its importer, placement policy, preflight, final verification a
 
 Use `scripts/run.ps1` or `python scripts/cad_translate.py` from this skill directory. AutoCAD 2025 is discovered from the registry; override with `CAD_TRANSLATE_AUTOCAD_ROOT` or the global `--autocad-root` option. Runtime DLLs are built for .NET 8 and deployed in Autodesk's trusted ApplicationPlugins folder; SDK compilation is needed only after native code changes.
 
-Both branches return **target-only** `translatedText`. The bilingual importer preserves original entities itself; never concatenate Chinese and English in the translation JSONL. For bilingual grid tables, use the table-side aligned-column strategy described in the bilingual workflow; ordinary labels retain nearby placement.
+Both branches return **target-only** `translatedText`. The bilingual importer preserves original entities itself; never concatenate Chinese and English in the translation JSONL. For bilingual multi-column schedules, preserve the original table and translate a full-size copy in nearby whitespace. Single-column lists use an aligned translation column; ordinary labels retain nearby placement. Read the bilingual workflow for supported table structures and fallbacks.
 
 For bilingual additions, keep target text on one line whenever its measured unwrapped width fits a collision-free nearby region. Do not prohibit wrapping: when a single line cannot fit without crossing a cell/frame, process geometry or neighboring content, allow controlled wrapping and then width/height fitting. Never inherit a narrow Chinese text box as the final English width without first testing the English single-line width.
 
@@ -34,4 +34,4 @@ Run `audit-summary` after import. `status=passed` means automatic checks passed;
 
 Read compact reports and bounded worklists; do not print whole manifests or detailed layout audits. Stage timing is written to `artifacts/*-timing.json`. Describe speed measurements as CAD processing time unless model/visual time was actually measured.
 
-DWG Chinese↔English replacement and additive bilingual flows have native regression fixtures. Dense title blocks can have no readable free space; report unresolved handles instead of forcing overlaps. DXF, dimensions, MLeader, native Table, XREF and proxy content require specific coverage or manual review; never call a partially translated drawing complete.
+DWG Chinese↔English replacement and additive bilingual flows have native regression fixtures. Legacy SHX/bigfont text may extract as Latin characters mixed with question marks instead of Chinese. Such records are unresolved encoding, not non-Chinese passthrough. Check the referenced font and bigfont in AutoCAD's actual support paths, restore the matching font if available, then re-extract the affected handles from the original DWG. If display is readable but extraction is not, investigate decoding or use a verified local visual transcription; do not guess missing technical values. A missing font alone does not prove the cause. Inspect these handles at readable scale; invisible text in a preview is not successful verification. Dense title blocks can have no readable free space; report unresolved handles instead of forcing overlaps. DXF, dimensions, MLeader, native Table, XREF and proxy content require specific coverage or manual review; never call a partially translated drawing complete.

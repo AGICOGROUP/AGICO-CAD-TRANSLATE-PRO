@@ -6,6 +6,7 @@ from replacement_quality import review, layout_review
 
 SOURCE_RESIDUE = re.compile(r"[\u2e80-\u2fff\u3000-\u303f\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufe10-\ufe1f\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffee\U00020000-\U0002fa1f\U00030000-\U000323af]")
 SOURCE_TEXT_RESIDUE = re.compile(r"[\u2e80-\u2fff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f\U00030000-\U000323af]")
+MTEXT_FONT_CODE = re.compile(r"\\[Ff][^;]*;")
 
 class ReplacePipeline:
     mode = "replace"
@@ -50,7 +51,8 @@ class ReplacePipeline:
         job = manifest_path.parent.parent
         source_lang, target_lang = direction(job)
         residual = [r["recordId"] for r in records if target_lang == "en" and SOURCE_TEXT_RESIDUE.search(visible(r.get("plainText", "")))]
-        raw = [r["recordId"] for r in records if target_lang == "en" and SOURCE_TEXT_RESIDUE.search(r.get("rawText", ""))]
+        raw = [r["recordId"] for r in records if target_lang == "en"
+            and SOURCE_TEXT_RESIDUE.search(MTEXT_FONT_CODE.sub("", r.get("rawText", "")))]
         invalid = []
         if target_lang == "zh":
             original = read_jsonl(job / "exchange" / "manifest.input.jsonl")
