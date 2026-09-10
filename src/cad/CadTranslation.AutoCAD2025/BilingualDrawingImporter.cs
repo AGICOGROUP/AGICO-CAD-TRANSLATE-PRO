@@ -41,6 +41,38 @@ internal static class BilingualDrawingImporter
 
     internal static int Run(JobContext context)
     {
+        var issues = new List<CadObjectAccess.Issue>();
+        var progress = new ImportProgress();
+        try { return RunCore(context, issues, progress); }
+        catch (System.Exception exception)
+        {
+            if (!exception.Data.Contains("stage")) exception.Data["stage"] = progress.Stage;
+            if (progress.Row is { } row)
+            {
+                if (!exception.Data.Contains("recordId")) exception.Data["recordId"] = row.RecordId;
+                if (exception.Data["handle"] is null) exception.Data["handle"] = row.Handle;
+                if (!exception.Data.Contains("objectType")) exception.Data["objectType"] = row.ObjectType;
+            }
+            throw;
+        }
+        finally
+        {
+            if (issues.Count > 0)
+            {
+                try { NativeDrawing.Report(context, "bilingual-object-access.json", new { count = issues.Count, examples = issues.Take(100).ToArray() }); }
+                catch (System.Exception reportError) { Console.Error.WriteLine($"Object access report: {reportError.Message}"); }
+            }
+        }
+    }
+
+    private sealed class ImportProgress
+    {
+        internal string Stage = "preflight";
+        internal ManifestRecord? Row;
+    }
+
+    private static int RunCore(JobContext context, List<CadObjectAccess.Issue> issues, ImportProgress progress)
+    {
         context.VerifySourceAndWorkingHashes();
         ManifestRecord[] manifest = NativeDrawing.ReadRows<ManifestRecord>(context.Config.ManifestPath);
         TranslationRecord[] translations = NativeDrawing.ReadRows<TranslationRecord>(context.Config.TranslationPath!);
@@ -52,11 +84,13 @@ internal static class BilingualDrawingImporter
         var unresolvedDetails = new List<object>();
         var tableCopies = new List<BilingualTableCopy.CopyReceipt>();
         var tableDecisions = new List<object>();
+        BilingualTermGroups.Group[] termGroups = [];
         string output = context.Config.OutputPath;
         if (Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.SourcePath), StringComparison.OrdinalIgnoreCase) ||
             Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.WorkingPath), StringComparison.OrdinalIgnoreCase))
             throw new CommandProtocolException("unsafe_output", "Bilingual output must be a separate file.");
 
+        progress.Stage = "open-working-drawing";
         using (var db = NativeDrawing.Open(context.Config.WorkingPath))
         {
             var previous = HostApplicationServices.WorkingDatabase;
@@ -64,28 +98,54 @@ internal static class BilingualDrawingImporter
             {
                 HostApplicationServices.WorkingDatabase = db;
                 using var tx = db.TransactionManager.StartTransaction();
+                var access = new CadObjectAccess(db, tx, issues);
+                progress.Stage = "resolve-source-text";
                 var inputList = new List<LayoutWriteInput>();
                 foreach (var row in manifest)
                 {
+                    progress.Row = row;
                     string restored = TranslationValidator.RestoreProtectedTokensForOutput(translated[row.RecordId].TranslatedText, row.ProtectedTokens);
-                    try { inputList.Add(new LayoutWriteInput(Resolve(db, row.Handle), row, restored, false)); }
+                    ObjectId id;
+                    try { id = Resolve(db, row.Handle); }
                     catch (CommandProtocolException) when (restored == row.RawText)
                     {
                         // Missing XREF diagnostic rows are exported for audit but have no ObjectId in the host database.
                         // They are safe to omit only when the translation is an exact passthrough.
+                        continue;
                     }
+                    access.Read<Entity>(id, "resolve-source-text", recordId: row.RecordId, required: true);
+                    inputList.Add(new LayoutWriteInput(id, row, restored, false));
                 }
                 var inputs = inputList.ToArray();
-                var baseline = DrawingTopologyCapture.Capture(db, tx, inputs);
+                progress.Row = null;
+                progress.Stage = "capture-topology";
+                var baseline = DrawingTopologyCapture.Capture(db, tx, inputs, access);
                 // Serialized GeometricExtents can contain stale MText column bounds.
                 // Use current font metrics before allocating whitespace beside originals.
+                progress.Stage = "refresh-text-bounds";
                 baseline = baseline with { Definitions = baseline.Definitions.Select(d => d with {
                     Texts = d.Texts.Select(t => {
-                        if (tx.GetObject(t.ObjectId, OpenMode.ForRead) is MText mt && CadLayoutGeometry.TryFreshBounds(mt) is { } b)
+                        if (access.Read<Entity>(t.ObjectId, "refresh-text-bounds", d.Name, d.Handle, t.RecordId, required: true) is MText mt && CadLayoutGeometry.TryFreshBounds(mt) is { } b)
                             return t with { Source = t.Source with { Bounds = new Rect2(b.MinX, b.MinY, b.MaxX, b.MaxY) } };
                         return t;
                     }).ToArray() }).ToArray() };
                 var topology = baseline.Definitions.SelectMany(d => d.Texts).ToDictionary(t => t.RecordId);
+                if (context.Config.SourceLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase) &&
+                    (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) ||
+                     context.Config.TargetLanguage.StartsWith("fr", StringComparison.OrdinalIgnoreCase)))
+                    termGroups=BilingualTermGroups.Find(manifest,baseline,access);
+                var termMembers=termGroups.SelectMany(g=>g.RecordIds).ToHashSet();
+                var termFollowers=termGroups.SelectMany(g=>g.RecordIds.Skip(1)).ToHashSet();
+                foreach (var group in termGroups)
+                {
+                    string target=translated[group.RecordIds[0]].TranslatedText;
+                    if (group.RecordIds.Any(id=>translated[id].TranslatedText!=target))
+                        throw new CommandProtocolException("bilingual_term_fragmented", $"Translate the complete term '{group.SourceText}' once: {string.Join(",",group.RecordIds)}");
+                    var leader=topology[group.RecordIds[0]];
+                    var boxes=group.RecordIds.Select(id=>topology[id].Source.Bounds).ToArray();
+                    var union=new Rect2(boxes.Min(b=>b.Left),boxes.Min(b=>b.Bottom),boxes.Max(b=>b.Right),boxes.Max(b=>b.Top));
+                    topology[group.RecordIds[0]]=leader with { Source=leader.Source with {Bounds=union,Anchor=union.Center} };
+                }
                 var definitions = baseline.Definitions.ToDictionary(d => d.Name);
                 var tableGroups = baseline.Definitions.ToDictionary(d => d.Name, d => BilingualTableLayout.Groups(d.Regions));
                 var occupied = baseline.Definitions.ToDictionary(d => d.Name, d => d.Texts.Select(t => t.Source.Bounds).ToList());
@@ -100,25 +160,31 @@ internal static class BilingualDrawingImporter
                             Plain(input.RestoredText), input.Manifest.ObjectType, text.DefinitionName,
                             text.Source.Bounds, text.Source.OriginalTextHeight);
                     }).ToArray());
-                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs, occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions);
-                var tableSlots = PlanTableSlots(db, tx, baseline, inputs.Where(i => !copied.Contains(i.Manifest.RecordId)).ToArray(), context.Config.TargetLanguage);
+                progress.Stage = "copy-bilingual-tables";
+                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, access);
+                progress.Stage = "plan-table-slots";
+                var tableSlots = PlanTableSlots(db, tx, baseline, inputs.Where(i => !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), context.Config.TargetLanguage, access);
                 foreach (var planned in tableSlots)
                     ReserveProjected(occupied, topology[planned.Key].DefinitionName, planned.Value.Slot, baseline.BlockInstances);
 
+                progress.Stage = "place-bilingual-text";
                 foreach (var input in inputs)
                 {
                     var row = input.Manifest;
+                    progress.Row = row;
+                    if (termFollowers.Contains(row.RecordId)) continue;
                     if (copied.Contains(row.RecordId)) continue;
                     if (translated[row.RecordId].TranslatedText == row.PlainText) continue;
                     if (!topology.TryGetValue(row.RecordId, out var source)) { unresolved.Add(row.RecordId); continue; }
-                    var original = (Entity)tx.GetObject(input.ObjectId, OpenMode.ForRead);
+                    var original = access.Read<Entity>(input.ObjectId, "place-source", source.DefinitionName, recordId: row.RecordId, required: true)!;
                     if (original is not DBText && original is not MText && original is not Dimension) { unresolved.Add(row.RecordId); continue; }
                     var definition = definitions[source.DefinitionName];
                     string targetText = Plain(input.RestoredText);
                     string normalized = Normalize(targetText);
                     string sourcePlain = Plain(row.RawText);
                     if (normalized.Length == 0) { unresolved.Add(row.RecordId); continue; }
-                    if (fixedLabels.ExistingEnglishIdBySourceId.TryGetValue(row.RecordId, out string? existingRecordId) &&
+                    if (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) &&
+                        fixedLabels.ExistingEnglishIdBySourceId.TryGetValue(row.RecordId, out string? existingRecordId) &&
                         topology.TryGetValue(existingRecordId, out var fixedEnglish))
                     {
                         string existingText = Plain(rowsByHandle[fixedEnglish.EntityHandle].RawText);
@@ -138,7 +204,7 @@ internal static class BilingualDrawingImporter
                     }
                     var existing = definition.Texts.Where(t => t.RecordId != row.RecordId && rowsByHandle.ContainsKey(t.EntityHandle))
                         .Where(t => BilingualLabelEquivalence.Matches(targetText, Plain(rowsByHandle[t.EntityHandle].RawText)))
-                        .Where(t => HasSourceLink((Entity)tx.GetObject(t.ObjectId, OpenMode.ForRead), row) ||
+                        .Where(t => HasSourceLink(access.Read<Entity>(t.ObjectId, "reuse-target", t.DefinitionName, recordId: t.RecordId, required: true)!, row) ||
                             Distance(source.Source.Bounds, t.Source.Bounds) <= source.Source.OriginalTextHeight * 4 ||
                             IsTableRowNeighbor(source.Source.Bounds, t.Source.Bounds, tableGroups[source.DefinitionName]))
                         .Where(t => !pairs.Any(p => p.TargetHandle == t.EntityHandle))
@@ -149,7 +215,7 @@ internal static class BilingualDrawingImporter
                         continue;
                     }
 
-                    var owner = OwningBlock(tx, original);
+                    var owner = OwningBlock(tx, original, access);
                     if (owner is null || owner.IsFromExternalReference) { unresolved.Add(row.RecordId); continue; }
                     using var added = new MText();
                     added.SetDatabaseDefaults(db);
@@ -183,6 +249,16 @@ internal static class BilingualDrawingImporter
                     ReserveProjected(occupied, source.DefinitionName, bounds, baseline.BlockInstances);
                     pairs.Add(new(row.RecordId, row.Handle, added.Handle.ToString(), targetText, "added", source.DefinitionName, bounds, scale, inTable ? "table-side-column" : "cell-local-or-nearby"));
                 }
+                foreach (var group in termGroups)
+                {
+                    var leader=pairs.FirstOrDefault(p=>p.RecordId==group.RecordIds[0]);
+                    foreach (string id in group.RecordIds.Skip(1))
+                    {
+                        if (leader is null) { unresolved.Add(id); continue; }
+                        var member=topology[id];
+                        pairs.Add(leader with {RecordId=id,SourceHandle=member.EntityHandle,Decision="group-member",PlacementStrategy="complete-term"});
+                    }
+                }
                 NativeDrawing.Report(context, "bilingual-review-windows.json", new {
                     windows = pairs.SelectMany(p => baseline.BlockInstances.Where(i => i.DefinitionId == p.DefinitionName)
                         .Select(i => {
@@ -194,13 +270,17 @@ internal static class BilingualDrawingImporter
                                 sourceText = rowsByHandle[p.SourceHandle].RawText, p.TargetText,
                                 instancePath = i.Path, bounds = i.WorldTransform.Apply(local) };
                         })) });
+                progress.Row = null;
+                progress.Stage = "save-bilingual-candidate";
                 tx.Commit();
                 NativeDrawing.Save(db, output);
             }
             finally { HostApplicationServices.WorkingDatabase = previous; }
         }
 
+        progress.Stage = "verify-saved-candidate";
         NativeDrawing.Report(context, "bilingual-pairs.json", new { outputMode = "bilingual", pairs, unresolved });
+        NativeDrawing.Report(context, "bilingual-term-placement.json", new {groups=termGroups});
         NativeDrawing.Report(context, "bilingual-unresolved.json", unresolvedDetails);
         // Reopen saved DWG before proving source retention and target associations.
         NativeDrawing.ExportCandidate(context);
@@ -217,7 +297,8 @@ internal static class BilingualDrawingImporter
         bool passed = changedSources.Length == 0 && missingTargets.Length == 0 && unresolved.Count == 0;
         NativeDrawing.Report(context, "bilingual-native-check.json", new { status = passed ? "passed" : "failed", outputMode = "bilingual",
             sourceRetainedCount = manifest.Length - changedSources.Length, changedSources, missingTargets, unresolved,
-            addedCount = pairs.Count(p => p.Decision == "added"), skippedExistingCount = pairs.Count(p => p.Decision != "added"),
+            addedCount = pairs.Count(p => p.Decision == "added"), skippedExistingCount = pairs.Count(p => p.Decision != "added" && p.Decision != "group-member"),
+            groupedSourceCount = pairs.Count(p=>p.Decision=="group-member"),
             candidateSha256 = Hashing.Sha256File(output), sourceSha256 = context.Config.SourceSha256 });
         NativeDrawing.Report(context, "bilingual-layout-audit.json", new { candidateReopened = true,
             texts = pairs, risks = Array.Empty<object>(), manualReview = unresolved,
@@ -242,7 +323,7 @@ internal static class BilingualDrawingImporter
     }
 
     private static Dictionary<string, (Rect2 Slot, double Height)> PlanTableSlots(Database db, Transaction tx,
-        CadLayoutBaseline baseline, LayoutWriteInput[] inputs, string language)
+        CadLayoutBaseline baseline, LayoutWriteInput[] inputs, string language, CadObjectAccess access)
     {
         var result = new Dictionary<string, (Rect2, double)>();
         var changed = inputs.Where(i => i.RestoredText != i.Manifest.RawText && i.RestoredText != i.Manifest.PlainText)
@@ -265,7 +346,7 @@ internal static class BilingualDrawingImporter
                 double width = 0;
                 foreach (var source in sources)
                 {
-                    var entity = tx.GetObject(source.ObjectId, OpenMode.ForRead);
+                    var entity = access.Read<Entity>(source.ObjectId, "table-slot-measure", definition.Name, recordId: source.RecordId, required: true)!;
                     if (entity is not DBText && entity is not MText) { width = 0; break; }
                     using var measure = new MText();
                     measure.SetDatabaseDefaults(db);
@@ -293,7 +374,7 @@ internal static class BilingualDrawingImporter
                     {
                         using var probe = new MText();
                         probe.SetDatabaseDefaults(db);
-                        var entity = tx.GetObject(sources[i].ObjectId, OpenMode.ForRead);
+                        var entity = access.Read<Entity>(sources[i].ObjectId, "table-slot-fit", definition.Name, recordId: sources[i].RecordId, required: true)!;
                         probe.TextStyleId = entity switch { MText mt => mt.TextStyleId, DBText dt => dt.TextStyleId,
                             Dimension dm => dm.GetDimstyleData().Dimtxsty, _ => db.Textstyle };
                         string contents = (language.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? @"\FSimSun;" : "") + Escape(Plain(changed[sources[i].RecordId].RestoredText));
@@ -377,6 +458,8 @@ internal static class BilingualDrawingImporter
             }
             }
         }
+        // One bounded obstacle-edge search before the existing emergency strategy.
+        if (TryLocalWhitespace(text, contents, source, definition, allowed, occupied, z, out result, out usedScale)) return true;
         // Last-resort bilingual placement: preserve text clearance, but do not let
         // thin process/frame geometry make a small translation impossible to add.
         {
@@ -411,10 +494,44 @@ internal static class BilingualDrawingImporter
         result = box; usedScale = 0; return false;
     }
 
+    internal static bool TryLocalWhitespace(MText text, string contents, CadLayoutText source,
+        CadDefinitionTopology definition, Rect2 allowed, IReadOnlyList<Rect2> occupied, double z,
+        out Rect2 result, out double usedScale)
+    {
+        result=source.Source.Bounds; usedScale=0;
+        // Keep this extra search scoped to the verified unrotated XY case.
+        if (Math.Abs(text.Rotation)>1e-6 || !text.Normal.IsEqualTo(Vector3d.ZAxis)) return false;
+        double height=source.Source.OriginalTextHeight;
+        foreach (double scale in new[] {.35,.25})
+        foreach (double factor in new[] {.8,.5})
+        {
+            text.TextHeight=height*scale; text.Width=0;
+            text.Contents="{\\W"+factor.ToString(CultureInfo.InvariantCulture)+";"+contents+"}";
+            double unwrapped=Math.Max(text.TextHeight,text.ActualWidth)*1.05;
+            foreach (double width in BilingualPlacementPolicy.CandidateWidths(allowed.Width,source.Source.Bounds.Width,height,unwrapped))
+            {
+                text.Width=width;
+                double w=Math.Max(text.TextHeight,text.ActualWidth)*1.02, h=Math.Max(text.TextHeight,text.ActualHeight)*1.02;
+                foreach (Rect2 slot in BilingualLocalPlacement.Candidates(allowed,source.Source.Bounds,w,h,occupied,height*.12))
+                {
+                    text.Location=new Point3d(slot.Left,slot.Top,z);
+                    var measured=CadLayoutGeometry.TryFreshBounds(text);
+                    if (measured is null) continue;
+                    var actual=new Rect2(measured.MinX,measured.MinY,measured.MaxX,measured.MaxY);
+                    if (!allowed.Contains(actual,1e-6) || occupied.Any(o=>Intersects(actual,o,height*.12))) continue;
+                    if (definition.BoundarySegments.Any(line=>Crosses(actual,line))) continue;
+                    if (definition.ProtectedGeometry.Any(g=>!g.Bounds.Contains(source.Source.Bounds) && Intersects(actual,g.Bounds,0))) continue;
+                    result=actual; usedScale=scale; return true;
+                }
+            }
+        }
+        return false;
+    }
+
     internal static bool Intersects(Rect2 a, Rect2 b, double padding) =>
         a.Right > b.Left - padding && a.Left < b.Right + padding && a.Top > b.Bottom - padding && a.Bottom < b.Top + padding;
 
-    private static bool Crosses(Rect2 b, Segment2 s)
+    internal static bool Crosses(Rect2 b, Segment2 s)
     {
         // Segment/rectangle clipping, including diagonal process lines.
         double low = 0, high = 1, dx = s.End.X - s.Start.X, dy = s.End.Y - s.Start.Y;
@@ -443,12 +560,19 @@ internal static class BilingualDrawingImporter
     {
         try { return db.GetObjectId(false, new Handle(long.Parse(handle, NumberStyles.HexNumber)), 0); }
         catch (Autodesk.AutoCAD.Runtime.Exception exception)
-        { throw new CommandProtocolException("bilingual_source_handle_missing", $"Source handle {handle}: {exception.Message}"); }
+        { throw new CommandProtocolException("bilingual_source_handle_missing", $"Source handle {handle}: {exception.Message}", exception); }
     }
-    private static BlockTableRecord? OwningBlock(Transaction tx, DBObject value)
+    private static BlockTableRecord? OwningBlock(Transaction tx, DBObject value, CadObjectAccess access)
     {
         var id = value.OwnerId;
-        while (!id.IsNull) { var owner = tx.GetObject(id, OpenMode.ForRead); if (owner is BlockTableRecord block) return block; id = owner.OwnerId; }
+        var visited = new HashSet<ObjectId>();
+        while (!id.IsNull && visited.Add(id))
+        {
+            var owner = access.Read<DBObject>(id, "source-owner", parentHandle: value.Handle.ToString());
+            if (owner is null) return null;
+            if (owner is BlockTableRecord block) return block;
+            id = owner.OwnerId;
+        }
         return null;
     }
     internal static string Plain(string raw) { using var text = new MText { Contents = raw }; return text.Text; }

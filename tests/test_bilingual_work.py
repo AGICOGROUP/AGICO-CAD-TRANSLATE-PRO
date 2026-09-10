@@ -9,6 +9,58 @@ from render_review import review_regions
 
 
 class BilingualWorkTests(unittest.TestCase):
+    def test_french_bilingual_uses_complete_native_term_and_rejects_chinese_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            for folder in ('exchange', 'config', 'artifacts'):
+                (job / folder).mkdir()
+            config = dict(outputMode='bilingual', sourceLanguage='zh-CN', targetLanguage='fr', sourceSha256='drawing')
+            (job/'config/export-job.json').write_text(json.dumps(config), encoding='utf-8')
+            rows = [dict(recordId=str(i), handle=str(i+10), inputHash='h'+str(i), rawText=s,
+                         plainText=s, protectedTokens=[]) for i,s in enumerate('硬脂酸')]
+            cad_translate._atomic_write_jsonl(job/'exchange/manifest.input.jsonl', rows)
+            (job/'artifacts/bilingual-term-groups.json').write_text(json.dumps(dict(sourceSha256='drawing',
+                groups=[dict(sourceText='硬脂酸', recordIds=['0','1','2'])])), encoding='utf-8')
+            self.assertEqual(1, cad_translate.prepare_translation_worklist(job)['translationRecordCount'])
+            cad_translate._atomic_write_jsonl(job/'batch.jsonl',[dict(recordId='0',translatedText='Acide stéarique')])
+            cad_translate.assemble_translations(job,job/'batch.jsonl')
+            output=job/'exchange/translations.output.jsonl'
+            self.assertEqual('passed',cad_translate.check_translations(job/'exchange/manifest.input.jsonl',output,job/'ok.json','bilingual')['status'])
+            bad=cad_translate._read_jsonl(output)
+            for row in bad: row['translatedText']='硬脂酸'
+            cad_translate._atomic_write_jsonl(job/'bad.jsonl',bad)
+            self.assertEqual('failed',cad_translate.check_translations(job/'exchange/manifest.input.jsonl',job/'bad.jsonl',job/'bad-report.json','bilingual')['status'])
+
+    def test_native_term_group_is_one_request_and_keeps_all_source_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            for folder in ('exchange', 'config', 'artifacts'):
+                (job / folder).mkdir()
+            config = dict(outputMode='bilingual', sourceLanguage='zh-CN', targetLanguage='en', sourceSha256='drawing')
+            (job/'config/export-job.json').write_text(json.dumps(config), encoding='utf-8')
+            rows = [dict(recordId=str(i), handle=str(i+10), inputHash='h'+str(i), rawText=s,
+                         plainText=s, protectedTokens=[]) for i,s in enumerate('硬脂酸')]
+            cad_translate._atomic_write_jsonl(job/'exchange/manifest.input.jsonl',rows)
+            (job/'artifacts/bilingual-term-groups.json').write_text(json.dumps(dict(sourceSha256='drawing',
+                groups=[dict(sourceText='硬脂酸', recordIds=['0','1','2'])])),encoding='utf-8')
+            result=cad_translate.prepare_translation_worklist(job)
+            self.assertEqual(1,result['translationRecordCount'])
+            work=cad_translate._read_jsonl(job/'exchange/translation-worklist/part-0001.jsonl')
+            self.assertEqual('硬脂酸',work[0]['sourceText'])
+            cad_translate._atomic_write_jsonl(job/'batch.jsonl',[dict(recordId='0',translatedText='Stearic Acid')])
+            cad_translate.assemble_translations(job,job/'batch.jsonl')
+            out=cad_translate._read_jsonl(job/'exchange/translations.output.jsonl')
+            self.assertEqual(['Stearic Acid']*3,[r['translatedText'] for r in out])
+            self.assertEqual(['h0','h1','h2'],[r['inputHash'] for r in out])
+            for row,value in zip(out,('Ste','aric','Acid')):
+                row['translatedText']=value
+            cad_translate._atomic_write_jsonl(job/'split.jsonl',out)
+            checked=cad_translate.check_translations(job/'exchange/manifest.input.jsonl',job/'split.jsonl',job/'split-check.json','bilingual')
+            self.assertEqual('failed',checked['status'])
+            config['outputMode']='replace'
+            (job/'config/export-job.json').write_text(json.dumps(config),encoding='utf-8')
+            self.assertEqual(3,cad_translate.prepare_translation_worklist(job)['translationRecordCount'])
+
     def test_review_reduces_work_without_losing_exchange_rows_or_markers(self):
         with tempfile.TemporaryDirectory() as tmp:
             job = Path(tmp)

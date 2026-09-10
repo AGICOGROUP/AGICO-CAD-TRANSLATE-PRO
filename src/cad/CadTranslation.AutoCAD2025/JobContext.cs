@@ -92,6 +92,19 @@ internal sealed partial class JobContext
             if (context is not null)
             {
                 context.WriteResult(Failed(context.Config, operation, exception));
+                try
+                {
+                    var assembly = typeof(Commands).Assembly;
+                    NativeDrawing.Report(context, "command-diagnostic.json", new {
+                        operation, stage = exception.Data["stage"], block = exception.Data["block"],
+                        recordId = exception.Data["recordId"], handle = exception.Data["handle"],
+                        parentHandle = exception.Data["parentHandle"], objectType = exception.Data["objectType"],
+                        error = ToError(exception), exception = exception.ToString(),
+                        assemblyPath = assembly.Location, moduleId = assembly.ManifestModule.ModuleVersionId,
+                        assemblySha256 = Hashing.Sha256File(assembly.Location)
+                    });
+                }
+                catch (Exception diagnosticError) { TryWriteHostDiagnostic($"Failure diagnostic: {diagnosticError.Message}"); }
                 return;
             }
 
@@ -155,8 +168,8 @@ internal sealed partial class JobContext
             new[] { ToError(exception) }, DateTimeOffset.UtcNow);
 
     private static CommandError ToError(Exception exception) => exception is CommandProtocolException protocol
-        ? new CommandError(protocol.Code, protocol.Message, null, null)
-        : new CommandError("command_failed", exception.Message, null, null);
+        ? new CommandError(protocol.Code, protocol.Message, exception.Data["recordId"] as string, exception.Data["handle"] as string)
+        : new CommandError("command_failed", exception.Message, exception.Data["recordId"] as string, exception.Data["handle"] as string);
 
     private static void RequireCompleteConfig(JobConfig config, string jobRoot)
     {

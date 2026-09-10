@@ -3,6 +3,39 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("bilingual_local_search_finds_obstacle_edge_gap_missed_by_fixed_anchors", () => {
+        var allowed = new Rect2(0, 0, 100, 50);
+        var source = new Rect2(40, 20, 60, 30);
+        Rect2[] obstacles = [new(0, 0, 26, 50), new(38, 0, 100, 50),
+            new(26, 0, 38, 12), new(26, 18, 38, 50)];
+        bool Clear(Rect2 r) => obstacles.All(o => r.Right + 1 <= o.Left || r.Left - 1 >= o.Right
+            || r.Top + 1 <= o.Bottom || r.Bottom - 1 >= o.Top);
+        AssertEx.True(!BilingualPlacementPolicy.EmergencyCandidates(allowed, source, 8, 3, 1).Any(Clear));
+        var candidates = BilingualLocalPlacement.Candidates(allowed, source, 8, 3, obstacles, 1);
+        AssertEx.True(candidates.Any(r => r.Left >= 27 && r.Right <= 37 && r.Bottom >= 13 && r.Top <= 17));
+        AssertEx.True(candidates.All(Clear));
+    }),
+    ("bilingual_local_search_preserves_real_cell_and_clearance", () => {
+        var cell = new Rect2(0, 0, 20, 12);
+        var source = new Rect2(5, 5, 15, 8);
+        var candidates = BilingualLocalPlacement.Candidates(cell, source, 8, 2, [source], 1);
+        AssertEx.True(candidates.Count > 0);
+        AssertEx.True(candidates.All(r => new Rect2(1, 1, 19, 11).Contains(r, 0)));
+        AssertEx.True(candidates.All(r => r.Right + 1 <= source.Left || r.Left - 1 >= source.Right
+            || r.Top + 1 <= source.Bottom || r.Bottom - 1 >= source.Top));
+        AssertEx.Equal(0, BilingualLocalPlacement.Candidates(cell, source, 19, 2, [], 1).Count);
+        AssertEx.Equal(0, BilingualLocalPlacement.Candidates(cell, source, 8, 2, [cell], 1).Count);
+    }),
+    ("bilingual_local_search_is_bounded_nearby_and_distance_ordered", () => {
+        var source = new Rect2(0, 0, 10, 2);
+        var obstacles = Enumerable.Range(0, 1000).Select(i => new Rect2(20 + i, 20, 20.2 + i, 20.2)).Append(source).ToArray();
+        var candidates = BilingualLocalPlacement.Candidates(new Rect2(-10000, -10000, 10000, 10000), source, 10, 2, obstacles, .5);
+        AssertEx.True(candidates.Count > 0 && candidates.Count <= 128);
+        AssertEx.True(candidates.All(r => r.Left >= -40 && r.Right <= 50 && r.Bottom >= -8 && r.Top <= 10));
+        var distances = candidates.Select(r => Math.Pow(r.Center.X - 5, 2) + Math.Pow(r.Center.Y - 1, 2)).ToArray();
+        AssertEx.True(distances.SequenceEqual(distances.OrderBy(d => d)));
+        AssertEx.Equal(candidates.Count, candidates.Distinct().Count());
+    }),
     ("replacement_local_search_offers_safe_nearby_space_without_leaving_cell", () => {
         var source = new Rect2(0, 0, 10, 2);
         var cell = new Rect2(-2, -8, 14, 10);

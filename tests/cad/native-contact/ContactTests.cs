@@ -25,15 +25,93 @@ public class ContactTests
             Assert(NativeGeometryContact.Intersects(dimension, new Rect2(1,3,2,4)) != true, "dimension interior cannot be confirmed from its box");
             LocalCorrection(false);
             LocalCorrection(true);
+            ObjectAccess();
+            BilingualLocalSearch();
             using var wide = new Polyline();
             wide.AddVertexAt(0,new Point2d(0,0),0,4,4);
             wide.AddVertexAt(1,new Point2d(10,10),0,4,4);
             Assert(NativeGeometryContact.Intersects(wide,new Rect2(0,1,1,2)) is null,"wide polyline cannot be cleared by center-line testing");
-            File.WriteAllText(report, "{\"status\":\"passed\",\"cases\":10}");
+            File.WriteAllText(report, "{\"status\":\"passed\",\"cases\":21}");
         }
         catch (System.Exception ex) { File.WriteAllText(report, System.Text.Json.JsonSerializer.Serialize(new {status="failed", error=ex.ToString()})); }
     }
     private static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+
+    private static void BilingualLocalSearch()
+    {
+        using var text=new MText();
+        text.SetDatabaseDefaults();
+        text.Attachment=AttachmentPoint.TopLeft;
+        var box=new Rect2(0,0,3,3);
+        var source=new CadLayoutText(ObjectId.Null,"a","model","1","AcDbText","Inspection Window",true,
+            new TextLayoutSnapshot("a",box,box.Center,3),null);
+        var definition=new CadDefinitionTopology("model","1",Array.Empty<Segment2>(),Array.Empty<LayoutRegion>(),
+            new[]{source},Array.Empty<CadProtectedGeometry>());
+        var allowed=new Rect2(-20,-20,20,20);
+        Assert(BilingualDrawingImporter.TryLocalWhitespace(text,"Inspection Window",source,definition,allowed,new[]{box},0,out var result,out _) &&
+            allowed.Contains(result) && !BilingualDrawingImporter.Intersects(result,box,.36) && text.Text=="Inspection Window",
+            "native local fallback must keep the complete readable target and respect the source obstacle");
+        Assert(!BilingualDrawingImporter.TryLocalWhitespace(text,"Inspection Window",source,definition,allowed,new[]{allowed},0,out _,out _),
+            "native local fallback must reject a fully occupied cell");
+    }
+
+    private static void ObjectAccess()
+    {
+        using var db=new Database(true,true);
+        using var other=new Database(true,true);
+        using var tx=db.TransactionManager.StartTransaction();
+        var issues=new List<CadObjectAccess.Issue>();
+        var access=new CadObjectAccess(db,tx,issues);
+        Assert(access.Read<Entity>(ObjectId.Null,"optional",parentHandle:"P") is null && issues.Count==1,"null optional object must be recorded and skipped");
+        try { access.Read<Entity>(ObjectId.Null,"source-read",block:"Model",parentHandle:"P",recordId:"r1",required:true); Assert(false,"required text must not be silently omitted"); }
+        catch (CommandProtocolException ex)
+        {
+            Assert((string?)ex.Data["stage"]=="source-read" && (string?)ex.Data["recordId"]=="r1" && (string?)ex.Data["parentHandle"]=="P","required failure must retain diagnostic context");
+            FailureDiagnostic(ex);
+        }
+        Assert(access.Read<DBObject>(other.BlockTableId,"foreign-db") is null && issues[^1].Error=="WrongDatabase","foreign database ID must not be read in the current transaction");
+        var table=(BlockTable)tx.GetObject(db.BlockTableId,OpenMode.ForRead);
+        var model=(BlockTableRecord)tx.GetObject(table[BlockTableRecord.ModelSpace],OpenMode.ForWrite);
+        var line=new Line(Point3d.Origin,new Point3d(5,0,0));
+        model.AppendEntity(line); tx.AddNewlyCreatedDBObject(line,true);
+        Assert(access.Read<Entity>(line.ObjectId,"live")==line && line.EndPoint.X==5,"valid objects must remain readable and unchanged");
+        line.Erase();
+        Assert(access.Read<Entity>(line.ObjectId,"erased") is null,"erased object must be skipped before GetObject");
+        var poly=new Polyline2d(); model.AppendEntity(poly); tx.AddNewlyCreatedDBObject(poly,true);
+        var a=new Vertex2d(new Point3d(0,0,0),0,0,0,0); poly.AppendVertex(a); tx.AddNewlyCreatedDBObject(a,true);
+        var b=new Vertex2d(new Point3d(8,8,0),0,0,0,0); poly.AppendVertex(b); tx.AddNewlyCreatedDBObject(b,true);
+        Assert(!access.TryVertices(new[]{a.ObjectId,ObjectId.Null,b.ObjectId},"polyline",poly.Handle.ToString(),"Model",out var points) && points.Length==0,
+            "missing vertex must invalidate the whole boundary, never bridge surviving vertices");
+        Assert(access.TryVertices(new[]{a.ObjectId,b.ObjectId},"polyline",poly.Handle.ToString(),"Model",out points) && points.Length==2 && points[1]==b.Position,
+            "complete vertex sequences must retain their original positions");
+        table.UpgradeOpen();
+        var definition=new BlockTableRecord {Name="AccessFixture"};
+        table.Add(definition); tx.AddNewlyCreatedDBObject(definition,true);
+        var reference=new BlockReference(new Point3d(3,4,0),definition.ObjectId);
+        model.AppendEntity(reference); tx.AddNewlyCreatedDBObject(reference,true);
+        var instances=BlockInstanceWalker.Capture(db,tx,access);
+        Assert(instances.Any(i=>i.DefinitionId=="AccessFixture"),
+            "protected block traversal must retain valid placed definitions");
+    }
+
+    private static void FailureDiagnostic(CommandProtocolException failure)
+    {
+        string dir=Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT"))!,"diagnostic-case");
+        Directory.CreateDirectory(dir);
+        var config=new CadTranslation.Contracts.JobConfig("1.0","diagnostic","import","","","hash","",null,"",
+            Path.Combine(dir,"result.json"),dir,"zh-CN","en","bilingual");
+        var context=(JobContext)Activator.CreateInstance(typeof(JobContext),System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic,
+            null,new object[]{config,dir},null)!;
+        JobContext.TryWriteFailure("import",context,failure);
+        using var report=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(dir,"command-diagnostic.json")));
+        var data=report.RootElement;
+        using var envelope=System.Text.Json.JsonDocument.Parse(File.ReadAllText(config.ResultPath));
+        Assert(data.GetProperty("stage").GetString()=="source-read" && data.GetProperty("parentHandle").GetString()=="P" &&
+            data.GetProperty("exception").GetString()!.Contains("CadObjectAccess") &&
+            data.GetProperty("assemblySha256").GetString()==Hashing.Sha256File(typeof(JobContext).Assembly.Location) &&
+            envelope.RootElement.GetProperty("errors")[0].GetProperty("recordId").GetString()=="r1",
+            "failure artifact and result envelope must retain stage, context, stack and the actual runtime fingerprint");
+    }
 
     private static void LocalCorrection(bool tightCell)
     {

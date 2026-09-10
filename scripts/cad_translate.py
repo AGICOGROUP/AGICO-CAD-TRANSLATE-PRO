@@ -25,7 +25,7 @@ TARGET_LANGUAGE_RESIDUE = re.compile(
 )
 DIAGNOSTIC_EXAMPLE_LIMIT = 20
 SUPPORTED_SOURCE_LANGUAGES = {"zh", "zh-cn", "zh-hans"}
-SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb"}
+SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb", "fr", "fr-fr", "fr-ca"}
 DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800}
 OUTPUT_MODES = {"replace", "bilingual"}
 LEGACY_OUTPUT_MODE_ALIASES = {"english": "replace"}
@@ -185,6 +185,8 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000, existi
         {"recordId": str(rows[0]["recordId"]), "sourceText": str(rows[0].get("plainText", "")),
          "protectedTokens": rows[0].get("protectedTokens", []),
          "occurrences": len(rows), "context": layout_hint(rows[0]),
+         **({"termMemberIds": rows[0]["termMemberIds"], "translationUnit": "complete-term; one nearby target for all source members"}
+            if "termMemberIds" in rows[0] else {}),
          "contextVariants": list({json.dumps(layout_hint(row), sort_keys=True): layout_hint(row) for row in rows}.values())[:4]}
         for rows in grouped
     ]

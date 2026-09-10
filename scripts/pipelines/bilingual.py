@@ -11,7 +11,13 @@ class BilingualPipeline:
         source_lang, target_lang = direction(manifest_path.parent.parent)
         sources = {r["recordId"]: r for r in read_jsonl(manifest_path)}
         invalid, requested = [], 0
-        for row in read_jsonl(translations_path):
+        rows = read_jsonl(translations_path)
+        targets = {r['recordId']:r['translatedText'] for r in rows}
+        from bilingual_work import term_groups
+        for group in term_groups(list(sources.values()),manifest_path.parent.parent):
+            if len({targets[r['recordId']] for r in group}) != 1:
+                invalid.extend(r['recordId'] for r in group)
+        for row in rows:
             source = sources[row["recordId"]]
             if needs_translation(source, source_lang):
                 requested += 1
@@ -19,8 +25,8 @@ class BilingualPipeline:
                 # V2 exchange contains ONLY the added translation; source preservation is native.
                 if not (HAN if target_lang == "zh" else LATIN).search(target):
                     invalid.append(row["recordId"])
-                if target_lang == "en" and HAN.search(target): invalid.append(row["recordId"])
-                if target_lang == "en" and not re.search(r"(?<!\w)[A-Za-z]{2,}(?!\w)", target): invalid.append(row["recordId"])
+                if target_lang != "zh" and HAN.search(target): invalid.append(row["recordId"])
+                if target_lang != "zh" and not re.search(r"(?<!\w)[A-Za-zÀ-ÖØ-öø-ÿ]{2,}(?!\w)", target): invalid.append(row["recordId"])
             if "\ufffd" in row["translatedText"] or (source.get("plainText") and not row["translatedText"].strip()):
                 invalid.append(row["recordId"])
         invalid = sorted(set(invalid))

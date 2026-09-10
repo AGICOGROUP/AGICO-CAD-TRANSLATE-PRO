@@ -13,6 +13,7 @@ def language(value):
     if value in {"zh", "zh-cn", "zh-hans"}: return "zh"
     if value in {"en", "en-us", "en-gb"}: return "en"
     if value in {"es", "es-es", "es-mx", "es-419"}: return "es"
+    if value in {"fr", "fr-fr", "fr-ca"}: return "fr"
     raise ValueError(f"Unsupported language: {value}")
 
 def direction(job):
@@ -57,9 +58,12 @@ def job_groups(records, source_language, job):
     mode = json.loads(config.read_text(encoding="utf-8")).get("outputMode") if config.is_file() else "replace"
     # Bilingual placement and its request grouping remain independent.
     if mode == "bilingual":
-        from bilingual_work import reviewed_reuse
+        from bilingual_work import reviewed_reuse, term_groups
         reused = reviewed_reuse(records, job)
         records = [r for r in records if r["recordId"] not in reused]
+        terms = term_groups(records, job)
+        members = {r['recordId'] for term in terms for r in term}
+        return terms + groups([r for r in records if r['recordId'] not in members], source_language)
     return groups(records, source_language, semantic=mode == "replace")
 
 def layout_hint(row):

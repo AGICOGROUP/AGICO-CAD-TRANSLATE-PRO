@@ -44,25 +44,28 @@ internal static class DrawingTopologyCapture
     internal static CadLayoutBaseline Capture(
         Database database,
         Transaction transaction,
-        IReadOnlyList<LayoutWriteInput> inputs)
+        IReadOnlyList<LayoutWriteInput> inputs,
+        CadObjectAccess? access = null)
     {
+        access ??= new CadObjectAccess(database, transaction);
         var inputById = inputs.ToDictionary(input => input.ObjectId);
         var definitions = new List<CadDefinitionTopology>();
-        BlockTable blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        BlockTable blockTable = access.Read<BlockTable>(database.BlockTableId, "topology-block-table", required: true)!;
 
         foreach (ObjectId blockId in blockTable)
         {
-            var block = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
+            var block = access.Read<BlockTableRecord>(blockId, "topology-block", parentHandle: blockTable.Handle.ToString());
+            if (block is null) continue;
             if (block.IsFromExternalReference || block.IsFromOverlayReference)
             {
                 continue;
             }
 
-            definitions.Add(CaptureDefinition(transaction, block, inputById));
+            definitions.Add(CaptureDefinition(transaction, block, inputById, access));
         }
 
-        CaptureOwnedTextOutsideDefinitions(transaction, inputs, definitions);
-        CadLayoutBaseline baseline = new(definitions, BlockInstanceWalker.Capture(database, transaction));
+        CaptureOwnedTextOutsideDefinitions(transaction, inputs, definitions, access);
+        CadLayoutBaseline baseline = new(definitions, BlockInstanceWalker.Capture(database, transaction, access));
         EnsureEveryInputWasCaptured(baseline, inputs);
         return baseline;
     }
@@ -70,7 +73,8 @@ internal static class DrawingTopologyCapture
     private static CadDefinitionTopology CaptureDefinition(
         Transaction transaction,
         BlockTableRecord block,
-        IReadOnlyDictionary<ObjectId, LayoutWriteInput> inputById)
+        IReadOnlyDictionary<ObjectId, LayoutWriteInput> inputById,
+        CadObjectAccess access)
     {
         var segments = new List<Segment2>();
         var closedFrames = new List<Rect2>();
@@ -80,21 +84,17 @@ internal static class DrawingTopologyCapture
 
         foreach (ObjectId entityId in block)
         {
-            DBObject value = transaction.GetObject(entityId, OpenMode.ForRead, false);
-            if (!TopologyCapturePolicy.ShouldCapture(value.IsErased) ||
-                value is not Entity entity)
-            {
-                continue;
-            }
-
             LayoutWriteInput? input = inputById.GetValueOrDefault(entityId);
+            var entity = access.Read<Entity>(entityId, "topology-entity", block.Name, block.Handle.ToString(),
+                input?.Manifest.RecordId, required: input is not null);
+            if (entity is null) continue;
             if (entity is DBText or MText &&
                 !TopologyCapturePolicy.ShouldCaptureText(block.Name, input is not null))
             {
                 continue;
             }
 
-            CaptureBoundary(transaction, entity, segments, closedFrames);
+            bool boundaryCaptured = CaptureBoundary(transaction, entity, segments, closedFrames, access, block.Name);
             if (entity is BlockReference && TryBounds(entity) is Rect2 blockBounds)
             {
                 blockFrameCandidates.Add((entityId, entity.Layer, blockBounds));
@@ -106,7 +106,7 @@ internal static class DrawingTopologyCapture
             }
 
             if (TryBounds(entity) is Rect2 bounds &&
-                entity is not Line and not Polyline and not Polyline2d)
+                (!boundaryCaptured || entity is not Line and not Polyline and not Polyline2d))
             {
                 protectedGeometry.Add(new CadProtectedGeometry(
                     entityId,
@@ -123,7 +123,7 @@ internal static class DrawingTopologyCapture
                 transaction,
                 id,
                 blockBounds,
-                tolerance);
+                tolerance, access, block.Name);
             int containedTextCount = textCandidates.Count(text =>
                 bounds.Contains(text.Source.Bounds, tolerance));
             if (SheetFrameCandidatePolicy.IsCandidate(
@@ -196,7 +196,7 @@ internal static class DrawingTopologyCapture
             text.Id,
             text.RecordId,
             block.Name,
-            ((Entity)transaction.GetObject(text.Id, OpenMode.ForRead, false)).Handle.ToString(),
+            access.Read<Entity>(text.Id, "topology-text", block.Name, recordId: text.RecordId, required: true)!.Handle.ToString(),
             text.Type,
             text.Candidate,
             text.IsChanged,
@@ -223,20 +223,19 @@ internal static class DrawingTopologyCapture
         Transaction transaction,
         ObjectId referenceId,
         Rect2 blockExtents,
-        double tolerance)
+        double tolerance, CadObjectAccess access, string blockName)
     {
-        if (transaction.GetObject(referenceId, OpenMode.ForRead, false) is not BlockReference reference)
+        if (access.Read<BlockReference>(referenceId, "frame-reference", blockName) is not { } reference)
         {
             return blockExtents;
         }
 
         var frameSegments = new List<Segment2>();
-        var definition = (BlockTableRecord)transaction.GetObject(
-            reference.BlockTableRecord,
-            OpenMode.ForRead);
+        var definition = access.Read<BlockTableRecord>(reference.BlockTableRecord, "frame-definition", blockName, reference.Handle.ToString());
+        if (definition is null) return blockExtents;
         foreach (ObjectId entityId in definition)
         {
-            if (transaction.GetObject(entityId, OpenMode.ForRead, false) is not Entity entity ||
+            if (access.Read<Entity>(entityId, "frame-member", definition.Name, definition.Handle.ToString()) is not { } entity ||
                 !IsFrameLayer(entity.Layer))
             {
                 continue;
@@ -262,10 +261,8 @@ internal static class DrawingTopologyCapture
                         reference.BlockTransform);
                     break;
                 case Polyline2d polyline2d:
-                    Point3d[] vertices = polyline2d
-                        .Cast<ObjectId>()
-                        .Select(vertexId => ((Vertex2d)transaction.GetObject(vertexId, OpenMode.ForRead)).Position)
-                        .ToArray();
+                    if (!access.TryVertices(polyline2d.Cast<ObjectId>(), "frame-polyline-vertex", polyline2d.Handle.ToString(), definition.Name, out var vertices))
+                        return blockExtents;
                     AddTransformedSegments(
                         frameSegments,
                         vertices,
@@ -426,11 +423,11 @@ internal static class DrawingTopologyCapture
             tolerance);
     }
 
-    private static void CaptureBoundary(
+    private static bool CaptureBoundary(
         Transaction transaction,
         Entity entity,
         ICollection<Segment2> segments,
-        ICollection<Rect2> closedFrames)
+        ICollection<Rect2> closedFrames, CadObjectAccess access, string blockName)
     {
         switch (entity)
         {
@@ -443,9 +440,9 @@ internal static class DrawingTopologyCapture
                 CapturePolyline(polyline, segments, closedFrames);
                 break;
             case Polyline2d polyline2d:
-                CapturePolyline2d(transaction, polyline2d, segments, closedFrames);
-                break;
+                return CapturePolyline2d(transaction, polyline2d, segments, closedFrames, access, blockName);
         }
+        return true;
     }
 
     private static void CapturePolyline(
@@ -464,24 +461,21 @@ internal static class DrawingTopologyCapture
         }
     }
 
-    private static void CapturePolyline2d(
+    private static bool CapturePolyline2d(
         Transaction transaction,
         Polyline2d polyline,
         ICollection<Segment2> segments,
-        ICollection<Rect2> closedFrames)
+        ICollection<Rect2> closedFrames, CadObjectAccess access, string blockName)
     {
-        var vertices = new List<Point2>();
-        foreach (ObjectId vertexId in polyline)
-        {
-            var vertex = (Vertex2d)transaction.GetObject(vertexId, OpenMode.ForRead);
-            vertices.Add(new Point2(vertex.Position.X, vertex.Position.Y));
-        }
+        if (!access.TryVertices(polyline.Cast<ObjectId>(), "topology-polyline-vertex", polyline.Handle.ToString(), blockName, out var points)) return false;
+        var vertices = points.Select(p => new Point2(p.X, p.Y)).ToArray();
 
         AddSegments(vertices, polyline.Closed, segments);
         if (polyline.Closed && TryBounds(polyline) is Rect2 bounds)
         {
             closedFrames.Add(bounds);
         }
+        return true;
     }
 
     private static void AddSegments(
@@ -556,7 +550,7 @@ internal static class DrawingTopologyCapture
     private static void CaptureOwnedTextOutsideDefinitions(
         Transaction transaction,
         IReadOnlyList<LayoutWriteInput> inputs,
-        IList<CadDefinitionTopology> definitions)
+        IList<CadDefinitionTopology> definitions, CadObjectAccess access)
     {
         HashSet<ObjectId> captured = definitions
             .SelectMany(definition => definition.Texts)
@@ -564,13 +558,13 @@ internal static class DrawingTopologyCapture
             .ToHashSet();
         foreach (LayoutWriteInput input in inputs.Where(input => !captured.Contains(input.ObjectId)))
         {
-            if (transaction.GetObject(input.ObjectId, OpenMode.ForRead, false) is not Entity entity ||
+            if (access.Read<Entity>(input.ObjectId, "topology-owned-text", recordId: input.Manifest.RecordId, required: true) is not { } entity ||
                 !TryCaptureText(entity, input, out var text))
             {
                 continue;
             }
 
-            BlockTableRecord? owner = FindOwningDefinition(transaction, entity);
+            BlockTableRecord? owner = FindOwningDefinition(transaction, entity, access);
             if (owner is null)
             {
                 continue;
@@ -591,10 +585,10 @@ internal static class DrawingTopologyCapture
             // Attribute coordinates belong to the containing space, while title-block
             // cell lines belong to the referenced definition. Transform those cells
             // before assigning the attribute's allowed region.
-            if (entity is AttributeReference && transaction.GetObject(entity.OwnerId, OpenMode.ForRead) is BlockReference reference)
+            if (entity is AttributeReference && access.Read<DBObject>(entity.OwnerId, "attribute-owner", parentHandle: entity.Handle.ToString()) is BlockReference reference)
             {
-                var referencedBlock = (BlockTableRecord)transaction.GetObject(reference.BlockTableRecord, OpenMode.ForRead);
-                var local = definitions.FirstOrDefault(d => d.Name == referencedBlock.Name);
+                var referencedBlock = access.Read<BlockTableRecord>(reference.BlockTableRecord, "attribute-definition", parentHandle: reference.Handle.ToString());
+                var local = referencedBlock is null ? null : definitions.FirstOrDefault(d => d.Name == referencedBlock.Name);
                 if (local is not null)
                 {
                     var transformed = local.Regions.Where(r => r.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.ClosedFrame)
@@ -630,13 +624,14 @@ internal static class DrawingTopologyCapture
         }
     }
 
-    private static BlockTableRecord? FindOwningDefinition(Transaction transaction, DBObject value)
+    private static BlockTableRecord? FindOwningDefinition(Transaction transaction, DBObject value, CadObjectAccess access)
     {
         ObjectId ownerId = value.OwnerId;
         var visited = new HashSet<ObjectId>();
         while (!ownerId.IsNull && visited.Add(ownerId))
         {
-            DBObject owner = transaction.GetObject(ownerId, OpenMode.ForRead, false);
+            DBObject? owner = access.Read<DBObject>(ownerId, "topology-owner", parentHandle: value.Handle.ToString());
+            if (owner is null) return null;
             if (owner is BlockTableRecord block)
             {
                 return block;

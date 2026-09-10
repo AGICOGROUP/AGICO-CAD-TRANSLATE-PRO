@@ -31,7 +31,10 @@ class ReplaceImportDatabaseTests(unittest.TestCase):
             / "BlockInstanceWalker.cs"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("reference.BlockTableRecord.IsNull", source)
+        # NativeContactTests exercises the null-reference behavior in AutoCAD;
+        # this static check ensures the walker still routes through that reader.
+        self.assertIn('access.Read<BlockTableRecord>(reference.BlockTableRecord, "instances-target"', source)
+        self.assertIn("if (target is null) continue;", source)
 
     def test_structure_signature_ignores_sub_nanounit_save_rounding(self):
         source = (

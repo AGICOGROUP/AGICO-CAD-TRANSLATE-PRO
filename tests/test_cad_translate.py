@@ -770,7 +770,15 @@ class CadTranslateDryTests(unittest.TestCase):
             root = Path(directory)
             source = root / "source.dwg"; source.write_bytes(b"original")
             with self.assertRaisesRegex(ValueError, "Unsupported language"):
-                cad_translate.prepare_export_job(source, root / "job", "fr", "en")
+                cad_translate.prepare_export_job(source, root / "job", "de", "en")
+
+    def test_export_accepts_chinese_to_french_direction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.dwg"; source.write_bytes(b"original")
+            config = cad_translate.prepare_export_job(source, root / "job", "zh-CN", "fr", "bilingual")
+            self.assertEqual("fr", config["targetLanguage"])
+            self.assertEqual(("zh", "fr"), cad_translate.direction(root / "job"))
 
     def test_export_preflight_blocks_before_creating_job(self):
         with tempfile.TemporaryDirectory() as directory:

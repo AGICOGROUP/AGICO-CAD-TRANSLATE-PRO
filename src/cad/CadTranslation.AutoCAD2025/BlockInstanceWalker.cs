@@ -6,15 +6,17 @@ namespace CadTranslation.AutoCAD2025;
 
 internal static class BlockInstanceWalker
 {
-    internal static BlockInstancePath[] Capture(Database database, Transaction transaction)
+    internal static BlockInstancePath[] Capture(Database database, Transaction transaction, CadObjectAccess? access = null)
     {
-        BlockTable blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        access ??= new CadObjectAccess(database, transaction);
+        BlockTable blockTable = access.Read<BlockTable>(database.BlockTableId, "instances-block-table", required: true)!;
         var definitions = new Dictionary<string, BlockDefinitionNode>(StringComparer.Ordinal);
         var roots = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (ObjectId blockId in blockTable)
         {
-            var block = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
+            var block = access.Read<BlockTableRecord>(blockId, "instances-block", parentHandle: blockTable.Handle.ToString());
+            if (block is null) continue;
             if (block.IsFromExternalReference || block.IsFromOverlayReference)
             {
                 continue;
@@ -23,19 +25,13 @@ internal static class BlockInstanceWalker
             var references = new List<BlockReferenceNode>();
             foreach (ObjectId entityId in block)
             {
-                if (transaction.GetObject(entityId, OpenMode.ForRead, false) is not BlockReference reference)
+                if (access.Read<Entity>(entityId, "instances-member", block.Name, block.Handle.ToString()) is not BlockReference reference)
                 {
                     continue;
                 }
 
-                // Legacy/proxy objects may expose an unresolved block reference.
-                // It has no usable topology and must not abort translation of the drawing.
-                if (reference.BlockTableRecord.IsNull)
-                {
-                    continue;
-                }
-
-                var target = (BlockTableRecord)transaction.GetObject(reference.BlockTableRecord, OpenMode.ForRead);
+                var target = access.Read<BlockTableRecord>(reference.BlockTableRecord, "instances-target", block.Name, reference.Handle.ToString());
+                if (target is null) continue;
                 if (target.IsFromExternalReference || target.IsFromOverlayReference)
                 {
                     continue;
@@ -50,15 +46,13 @@ internal static class BlockInstanceWalker
             definitions[block.Name] = new BlockDefinitionNode(block.Name, references);
         }
 
-        DBDictionary layouts = (DBDictionary)transaction.GetObject(database.LayoutDictionaryId, OpenMode.ForRead);
+        DBDictionary layouts = access.Read<DBDictionary>(database.LayoutDictionaryId, "instances-layouts", required: true)!;
         foreach (DBDictionaryEntry entry in layouts)
         {
-            var layout = (Layout)transaction.GetObject(entry.Value, OpenMode.ForRead);
-            if (layout.BlockTableRecordId.IsNull)
-            {
-                continue;
-            }
-            var root = (BlockTableRecord)transaction.GetObject(layout.BlockTableRecordId, OpenMode.ForRead);
+            var layout = access.Read<Layout>(entry.Value, "instances-layout", parentHandle: layouts.Handle.ToString());
+            if (layout is null) continue;
+            var root = access.Read<BlockTableRecord>(layout.BlockTableRecordId, "instances-layout-root", parentHandle: layout.Handle.ToString());
+            if (root is null) continue;
             if (definitions.ContainsKey(root.Name))
             {
                 roots.Add(root.Name);

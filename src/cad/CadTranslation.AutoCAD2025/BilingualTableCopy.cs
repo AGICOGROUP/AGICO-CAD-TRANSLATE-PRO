@@ -11,20 +11,26 @@ internal static class BilingualTableCopy
 
     internal static HashSet<string> Apply(Database db, Transaction tx, CadLayoutBaseline baseline,
         LayoutWriteInput[] inputs, Dictionary<string, List<Rect2>> occupied, string language,
-        List<BilingualDrawingImporter.Pair> pairs, List<CopyReceipt> receipts, List<object> decisions)
+        List<BilingualDrawingImporter.Pair> pairs, List<CopyReceipt> receipts, List<object> decisions,
+        CadObjectAccess? access = null)
     {
+        access ??= new CadObjectAccess(db, tx);
+        var requiredIds = inputs.Select(i => i.ObjectId).ToHashSet();
         var handled = new HashSet<string>();
         var changed = inputs.Where(i => BilingualDrawingImporter.Plain(i.RestoredText) != BilingualDrawingImporter.Plain(i.Manifest.RawText))
             .ToDictionary(i => i.Manifest.RecordId);
         foreach (var definition in baseline.Definitions)
         foreach (var text in definition.Texts)
         {
-            var entity = (Entity)tx.GetObject(text.ObjectId,OpenMode.ForRead);
+            var entity = access.Read<Entity>(text.ObjectId, "table-pair-scan", definition.Name,
+                recordId: text.RecordId, required: requiredIds.Contains(text.ObjectId));
+            if (entity is null) continue;
             if (entity.ExtensionDictionary.IsNull) continue;
-            var dict = (DBDictionary)tx.GetObject(entity.ExtensionDictionary,OpenMode.ForRead);
+            var dict = access.Read<DBDictionary>(entity.ExtensionDictionary, "table-pair-dictionary", definition.Name, entity.Handle.ToString());
+            if (dict is null) continue;
             if (!dict.Contains("CADTRANS_TABLE_PAIR")) continue;
-            var data = ((Xrecord)tx.GetObject(dict.GetAt("CADTRANS_TABLE_PAIR"),OpenMode.ForRead)).Data?.AsArray();
-            if (data is not { Length: 2 }) continue;
+            var data = access.Read<Xrecord>(dict.GetAt("CADTRANS_TABLE_PAIR"), "table-pair-record", definition.Name, entity.Handle.ToString())?.Data?.AsArray();
+            if (data is not { Length: 2 } || data[0].Value is not string || data[1].Value is not string) continue;
             var source = inputs.FirstOrDefault(i => i.Manifest.Handle == (string)data[0].Value);
             if (source is null || !changed.ContainsKey(source.Manifest.RecordId)) continue;
             string expected = BilingualDrawingImporter.Plain(source.RestoredText);
@@ -59,12 +65,14 @@ internal static class BilingualTableCopy
                 bool multiColumn = requests.GroupBy(t => cells.Where(c => c.Contains(t.Source.Bounds)).Select(c => Math.Round(c.Center.Y, 3)).FirstOrDefault())
                     .Any(g => g.Count() > 1);
                 if (!multiColumn) continue;
-                var owner = (BlockTableRecord)tx.GetObject(db.GetObjectId(false, new Handle(Convert.ToInt64(definition.Handle, 16)), 0), OpenMode.ForRead);
+                var owner = access.Read<BlockTableRecord>(db.GetObjectId(false, new Handle(Convert.ToInt64(definition.Handle, 16)), 0), "table-owner", definition.Name);
+                if (owner is null) { decisions.Add(new { table, strategy="cell-local", reason="unreadable-table-owner" }); continue; }
                 var members = new List<Entity>();
                 bool unsupported = false;
                 foreach (ObjectId id in owner)
                 {
-                    if (tx.GetObject(id, OpenMode.ForRead) is not Entity entity) continue;
+                    var entity = access.Read<Entity>(id, "table-member", definition.Name, owner.Handle.ToString());
+                    if (entity is null) { unsupported = true; break; }
                     if (entity is Line line) { if (!Clip(line,table,out _,out _)) continue; }
                     else if (Bounds(entity) is not { } b || !table.Contains(b,1e-3)) continue;
                     if (entity is not Line and not MText and not DBText) { unsupported = true; break; }

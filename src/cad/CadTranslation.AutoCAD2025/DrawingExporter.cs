@@ -54,6 +54,19 @@ internal static class DrawingExporter
                 var adapterContext = new AdapterContext(database, transaction, context.Config.SourceSha256, item.OwnerPath);
                 foreach (TextSlot slot in adapter.Read(item.Value, adapterContext)) records.Add(ToRecord(item, slot, context.Config.SourceSha256));
             }
+            if (activePrefixes is not null && context.Config.SourceLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase) &&
+                (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) ||
+                 context.Config.TargetLanguage.StartsWith("fr", StringComparison.OrdinalIgnoreCase)) &&
+                Path.GetFileName(context.Config.ManifestPath)=="manifest.input.jsonl")
+            {
+                var terms=BilingualTermGroups.Find(records);
+                if (terms.Length>0)
+                {
+                    var inputs=records.Select(r=>new LayoutWriteInput(database.GetObjectId(false,new Handle(ParseHandle(r.Handle)),0),r,r.RawText,false)).ToArray();
+                    terms=BilingualTermGroups.Find(records,DrawingTopologyCapture.Capture(database,transaction,inputs),new CadObjectAccess(database,transaction));
+                }
+                NativeDrawing.Report(context,"bilingual-term-groups.json",new {context.Config.SourceSha256,groups=terms});
+            }
             transaction.Commit();
         }
         var ordered = records.OrderBy(record => record.OwnerPath, StringComparer.Ordinal).ThenBy(record => ParseHandle(record.Handle)).ThenBy(record => record.ObjectType, StringComparer.Ordinal).ThenBy(record => record.Slot, StringComparer.Ordinal).ToArray();
@@ -63,7 +76,9 @@ internal static class DrawingExporter
         AtomicFile.WriteUtf8(context.Config.ManifestPath, jsonl);
         if (string.Equals(context.Config.OutputMode, "bilingual", StringComparison.OrdinalIgnoreCase))
             NativeDrawing.Report(context, "bilingual-scope.json", new { scope = "model-and-all-layout-reachable-blocks",
-                activeRecordCount = ordered.Length, preservedUnusedBlocks = unusedBlocks });
+                activeRecordCount = ordered.Length, preservedUnusedBlocks = unusedBlocks,
+                runtimeModuleId = typeof(DrawingExporter).Assembly.ManifestModule.ModuleVersionId,
+                runtimePath = typeof(DrawingExporter).Assembly.Location });
         AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "export-summary.json"), JsonSerializer.Serialize(new { recordCount = ordered.Length, typeCounts = ordered.GroupBy(record => record.ObjectType).ToDictionary(group => group.Key, group => group.Count()), unsupported }, JsonDefaults.Options));
         context.VerifySourceAndWorkingHashes();
         return ordered.Length;

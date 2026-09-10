@@ -30,6 +30,13 @@ def enabled(job):
             config.get("sourceLanguage", "").lower() in {"zh", "zh-cn", "zh-hans"} and
             config.get("targetLanguage", "").lower() in {"en", "en-us", "en-gb"})
 
+def term_group_enabled(job):
+    path = Path(job) / "config/export-job.json"
+    config = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return (config.get("outputMode") == "bilingual" and
+            config.get("sourceLanguage", "").lower() in {"zh", "zh-cn", "zh-hans"} and
+            config.get("targetLanguage", "").lower() in {"en", "en-us", "en-gb", "fr", "fr-fr", "fr-ca"})
+
 def reviewed_reuse(records, job):
     path = Path(job) / "exchange/bilingual-inline-review.json"
     if not enabled(job) or not path.is_file(): return {}
@@ -47,4 +54,28 @@ def reviewed_reuse(records, job):
         # Keep all protected markers in order. Native importer reuses the original
         # mixed entity; this exchange text is never written back to its source.
         result[row["recordId"]] = HAN.sub("", row["plainText"])
+    return result
+
+
+def term_groups(records, job):
+    """Native CAD has checked adjacency, ownership and intervening cell borders."""
+    path = Path(job) / 'artifacts/bilingual-term-groups.json'
+    if not term_group_enabled(job) or not path.is_file(): return []
+    receipt = json.loads(path.read_text(encoding='utf-8'))
+    config = json.loads((Path(job)/'config/export-job.json').read_text(encoding='utf-8'))
+    if receipt.get('sourceSha256') != config.get('sourceSha256'):
+        raise ValueError('Term groups belong to a different source drawing')
+    by_id = {r['recordId']:r for r in records}
+    used, result = set(), []
+    for group in receipt.get('groups', []):
+        ids = group['recordIds']
+        if not 2 <= len(ids) <= 12 or any(i not in by_id or i in used for i in ids) or len(set(ids)) != len(ids):
+            raise ValueError('Invalid or overlapping bilingual term group')
+        rows = [by_id[i] for i in ids]
+        if any(r.get('protectedTokens') or not HAN.fullmatch(r.get('plainText','')) for r in rows):
+            raise ValueError('Term grouping requires unformatted Chinese single characters')
+        if ''.join(r['plainText'] for r in rows) != group['sourceText']:
+            raise ValueError('Term group no longer matches its source text')
+        used.update(ids)
+        result.append([dict(rows[0], plainText=group['sourceText'], termMemberIds=ids), *rows[1:]])
     return result
