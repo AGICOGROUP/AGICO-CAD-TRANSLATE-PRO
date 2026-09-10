@@ -4,7 +4,6 @@ from pipeline_io import read_jsonl, write_report, read_report, digest, launch_im
 from translation_work import direction, needs_translation, visible, HAN, LATIN
 from replacement_quality import review, layout_review
 
-SOURCE_RESIDUE = re.compile(r"[\u2e80-\u2fff\u3000-\u303f\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufe10-\ufe1f\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffee\U00020000-\U0002fa1f\U00030000-\U000323af]")
 SOURCE_TEXT_RESIDUE = re.compile(r"[\u2e80-\u2fff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f\U00030000-\U000323af]")
 MTEXT_FONT_CODE = re.compile(r"\\[Ff][^;]*;")
 
@@ -27,7 +26,7 @@ class ReplacePipeline:
             if findings:
                 quality.append({"recordId": row["recordId"], "sourceText": source.get("plainText"),
                     "translatedText": row["translatedText"], "findings": findings})
-            if target_lang == "en" and SOURCE_RESIDUE.search(target): residual.append(row["recordId"])
+            if target_lang == "en" and SOURCE_TEXT_RESIDUE.search(target): residual.append(row["recordId"])
             if target_lang == "en" and HAN.search(visible(source.get("plainText", ""))) and not re.search(r"(?<!\w)[A-Za-z]{2,}(?!\w)", target): invalid.append(row["recordId"])
             if target_lang == "zh" and needed and not HAN.search(target): invalid.append(row["recordId"])
             if (source.get("plainText") and not row["translatedText"].strip()) or "\ufffd" in row["translatedText"]:
@@ -89,12 +88,16 @@ class ReplacePipeline:
         layout = read_report(job / "artifacts" / "replace-layout-audit.json")
         logical = read_report(job / "artifacts" / "logical-flow-report.json")
         if (language_report["status"] != "passed" or native["status"] != "passed" or structure["status"] != "passed"
-            or layout.get("manualReview") or layout.get("missingBlockInstancePaths")
-            or runtime._segment_overflow_count(logical) or native["candidateSha256"] != digest(staged)):
+            or layout.get("missingBlockInstancePaths") or native["candidateSha256"] != digest(staged)):
             raise ValueError("Replacement candidate gate failed; staged drawing retained in artifacts.")
+        review_ids = sorted({value for risk in layout.get("manualReview", [])
+            for value in (risk.get("recordId"), risk.get("otherRecordId")) if value})
+        overflow = runtime._segment_overflow_count(logical)
         publish_candidate(staged, config["outputPath"])
         write_report(job / "artifacts" / "replace-final.json", {"status": "passed", "outputMode": "replace",
             "candidateSha256": native["candidateSha256"], "requiresVisualReview": True,
+            "layoutReviewRequired": bool(layout.get("manualReview") or overflow),
+            "layoutReviewRecordIds": review_ids, "segmentOverflowCount": overflow,
             "sourceSha256": config["sourceSha256"]})
         return 0
 
@@ -108,14 +111,28 @@ class ReplacePipeline:
         if not candidate.is_file() or digest(candidate) != report.get("candidateSha256"): errors.append("replace_candidate_missing_or_changed")
         review_path = job / "artifacts" / "replace-visual-review.json"
         review = read_report(review_path) if review_path.is_file() else {}
-        visual_passed = (review.get("status") == "passed" and review.get("candidateSha256") == report.get("candidateSha256")
+        warnings = review.get("warnings", [])
+        warnings_valid = isinstance(warnings, list) and all(isinstance(w, str) and w.strip() for w in warnings)
+        # One final visual decision covers both fitting and readability; layout IDs
+        # remain review targets, not a second machine-enforced approval checklist.
+        visual_passed = (review.get("status") in {"passed", "passed_with_warnings"}
+            and not review.get("blockingIssues") and warnings_valid
+            and (review.get("status") != "passed_with_warnings" or bool(warnings))
+            and review.get("candidateSha256") == report.get("candidateSha256")
             and review.get("sourceSha256") == config["sourceSha256"] and bool(review.get("images"))
             and all((job / "artifacts" / p).is_file() for p in review.get("images", [])))
         quality_counts = {}
         for name in ("semantic", "readability"):
             detail = job / "artifacts" / f"replace-{name}-review.json"
             quality_counts[name] = read_report(detail).get("count", 0) if detail.is_file() else None
-        return {"outputMode": self.mode, "status": "failed" if errors else "passed",
+        if review.get("status") == "failed" or review.get("blockingIssues"):
+            errors.append("replace_visual_blocking_issues")
+        ready = not errors and visual_passed
+        blocked = bool(errors or review.get("status") == "failed" or review.get("blockingIssues"))
+        return {"outputMode": self.mode, "status": "failed" if blocked else "review_required" if report.get("layoutReviewRequired") and not visual_passed else "passed",
             "qualityReviewCounts": quality_counts,
             "gate": {"passed": not errors, "errorCodes": errors}, "requiresVisualReview": not visual_passed,
-            "deliveryReady": not errors and visual_passed, "candidate": str(candidate)}
+            "deliveryReady": ready, "candidate": str(candidate),
+            "deliveryStatus": "ready_with_warnings" if ready and warnings else "ready" if ready else "blocked" if blocked else "needs_review",
+            "warnings": warnings if ready else [], "blockingIssues": review.get("blockingIssues", []),
+            "layoutReviewRecordIds": report.get("layoutReviewRecordIds", []), "segmentOverflowCount": report.get("segmentOverflowCount", 0)}

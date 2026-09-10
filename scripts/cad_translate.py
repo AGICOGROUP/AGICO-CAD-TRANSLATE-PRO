@@ -12,6 +12,7 @@ if str(SKILL_ROOT / "scripts") not in sys.path:
 from pipelines import get_pipeline
 from translation_work import direction, language, needs_translation, groups, job_groups, layout_hint
 from job_timing import record as record_timing
+from bilingual_work import enabled as inline_review_enabled, inline_candidates, reviewed_reuse
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 AUTOCAD_2025_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows")
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
@@ -158,13 +159,26 @@ def _atomic_write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
 def _id_diagnostic(label: str, values: list[str]) -> str:
     return f"{label}_count={len(values)}, {label}_examples={values[:DIAGNOSTIC_EXAMPLE_LIMIT]}"
 
-def prepare_translation_worklist(job: Path, max_source_chars: int = 6000) -> dict[str, object]:
+def prepare_translation_worklist(job: Path, max_source_chars: int = 6000, existing_inline_handles: str | None = None) -> dict[str, object]:
     """Create model-facing batches containing only record IDs and CJK source text."""
     job = absolute(job)
     if max_source_chars < 1:
         raise ValueError("max_source_chars must be positive")
     manifest_path = job / "exchange" / "manifest.input.jsonl"
     manifest = _read_jsonl(manifest_path)
+    candidates = inline_candidates(manifest) if inline_review_enabled(job) else []
+    if inline_review_enabled(job):
+        _atomic_write_jsonl(job / "exchange/bilingual-inline-candidates.jsonl", candidates)
+    if existing_inline_handles is not None:
+        selected = {h.strip().upper() for h in existing_inline_handles.split(",") if h.strip()}
+        by_handle = {r["handle"].upper(): r for r in candidates}
+        if not inline_review_enabled(job) or selected - by_handle.keys():
+            raise ValueError("Reviewed inline handles must be current bilingual candidates")
+        config = json.loads((job / "config/export-job.json").read_text(encoding="utf-8"))
+        receipt = {"sourceSha256": config["sourceSha256"], "records": [
+            {k: by_handle[h][k] for k in ("recordId", "inputHash")} for h in sorted(selected)]}
+        (job / "exchange/bilingual-inline-review.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    reused = reviewed_reuse(manifest, job)
     source_language, _ = direction(job)
     grouped = job_groups(manifest, source_language, job)
     work_records = [
@@ -200,7 +214,9 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000) -> dic
         "status": "ready",
         "manifestRecordCount": len(manifest),
         "translationRecordCount": len(work_records),
-        "passthroughRecordCount": len(manifest) - requested_count,
+        "passthroughRecordCount": len(manifest) - requested_count - len(reused),
+        "existingInlineCandidateCount": len(candidates),
+        "reviewedExistingInlineCount": len(reused),
         "sourceEntityCount": requested_count,
         "deduplicatedRecordCount": requested_count - len(work_records),
         "sourceCharacterCount": sum(len(str(record["sourceText"])) for record in work_records),
@@ -219,6 +235,7 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
     job, translated = absolute(job), absolute(translated)
     manifest_path = job / "exchange" / "manifest.input.jsonl"
     manifest = _read_jsonl(manifest_path)
+    reused = reviewed_reuse(manifest, job)
     sources = translated.glob("*.jsonl") if translated.is_dir() else [translated]
     compact_records: list[dict[str, object]] = []
     for path in sorted(sources):
@@ -264,9 +281,9 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
                 "schemaVersion": "1.0",
                 "recordId": record_id,
                 "inputHash": str(source["inputHash"]),
-                "translatedText": received[record_id] if needs_translation else str(source.get("plainText", "")),
+                "translatedText": received[record_id] if needs_translation else reused.get(record_id, str(source.get("plainText", ""))),
                 "reviewStatus": "approved",
-                "reason": "model translation" if needs_translation else "identity: source contains no Chinese",
+                "reason": "model translation" if needs_translation else ("reviewed existing inline bilingual" if record_id in reused else "identity: source contains no Chinese"),
             }
         )
 
@@ -296,7 +313,8 @@ def assemble_translations(job: Path, translated: Path) -> dict[str, object]:
         "status": "passed",
         "records": len(complete),
         "translatedSourceRecords": len(expected),
-        "passthroughRecords": len(complete) - len(expected),
+        "passthroughRecords": len(complete) - len(expected) - len(reused),
+        "reviewedExistingInlineCount": len(reused),
         "output": str(target),
     }
 
@@ -766,6 +784,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
     export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="replace")
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
+    prepared.add_argument("--existing-inline-handles", help="Comma-separated current handles reviewed as complete inline bilingual pairs")
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
     imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True); imported.add_argument("--timeout-seconds", type=int)
     checked = sub.add_parser("check-translations"); checked.add_argument("--job", type=Path, required=True); checked.add_argument("--translations", type=Path, required=True); checked.add_argument("--report", type=Path)
@@ -773,7 +792,7 @@ def main(argv: list[str] | None = None) -> int:
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
     elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode); output = {"job": str(absolute(args.job)), "exitCode": code}
-    elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars), 0
+    elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars, args.existing_inline_handles), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0
     elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "check-translations":

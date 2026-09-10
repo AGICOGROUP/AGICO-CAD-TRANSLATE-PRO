@@ -56,6 +56,10 @@ def job_groups(records, source_language, job):
     config = Path(job) / "config" / "export-job.json"
     mode = json.loads(config.read_text(encoding="utf-8")).get("outputMode") if config.is_file() else "replace"
     # Bilingual placement and its request grouping remain independent.
+    if mode == "bilingual":
+        from bilingual_work import reviewed_reuse
+        reused = reviewed_reuse(records, job)
+        records = [r for r in records if r["recordId"] not in reused]
     return groups(records, source_language, semantic=mode == "replace")
 
 def layout_hint(row):

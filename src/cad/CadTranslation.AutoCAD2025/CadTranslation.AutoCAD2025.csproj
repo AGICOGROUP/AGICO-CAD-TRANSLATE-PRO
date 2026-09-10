@@ -9,6 +9,7 @@
     <AutoCADDir Condition="'$(AutoCADDir)'=='' and '$(AutoCADRelease)'=='2027'">C:\Program Files\Autodesk\AutoCAD 2027</AutoCADDir>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="NativeContactTests" />
     <ProjectReference Include="..\CadTranslation.Contracts\CadTranslation.Contracts.csproj" />
     <ProjectReference Include="..\CadTranslation.Core\CadTranslation.Core.csproj" />
     <Reference Include="AcCoreMgd" HintPath="$(AutoCADDir)\accoremgd.dll">

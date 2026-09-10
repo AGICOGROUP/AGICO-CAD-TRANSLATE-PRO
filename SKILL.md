@@ -5,7 +5,13 @@ description: Use when translating DWG or DXF engineering drawings between Chines
 
 # CAD Translate Pro
 
-Resolve the user's requested output mode and language direction before creating a job. Default to replacement for “英文版 / 中文版 / 翻译成… / 替换”. Select bilingual for “双语 / 中英对照 / 保留原文加翻译”. Ask only if those requests conflict. Never infer a mode from an old job, branch name or input filename.
+Resolve output mode and target language from the user's current requested result before creating a job:
+
+- `replace`: “翻译为英文 / 翻译为中文 / 翻译成某语言 / 英文版 / 中文版 / 替换模式 / 覆盖模式”, without a request to retain/add another language, means replace the source-language text with the requested target language. Replacement describes text editing in a new output file, not overwriting the original DWG.
+- `bilingual`: “加上中文 / 加上英文 / 加上其他语言 / 做成双语版 / 变为双语版 / 中英对照 / 保留原文加翻译” means retain the original text and add the requested target language. Only fill missing translations; reuse complete existing bilingual content without duplicating it.
+- An affirmative request for bilingual output takes precedence over generic translation wording: “翻译成英文，做成双语版” means keep Chinese and add English, not replace Chinese. Follow the requested target language; do not assume bilingual always means adding English. Interpret intent and negation: “不要双语，只要英文” means replacement, and bilingual wording inside drawing content is not a user instruction.
+
+Do not ask the user to reconfirm a mode that these rules already resolve. Ask only when the requested result genuinely conflicts or the target language cannot be determined from the request and source. Never infer mode from an old job, branch name, input filename, or the drawing already containing some bilingual text. Pass the resolved `--output-mode` and language direction explicitly to the selected independent pipeline.
 
 - `replace`: read [replacement workflow](references/replace-workflow.md), including full-text preservation and local whitespace correction for post-composition word loss, overlaps or unsuitable wrapping.
 - `bilingual`: read [bilingual workflow](references/bilingual-workflow.md).
@@ -28,9 +34,11 @@ Use the user-supplied project glossary first, then relevant entries in [cement-i
 
 ## Delivery
 
-Never overwrite the source. Use a fresh job directory for each attempt. A failed stage leaves its staged drawing under artifacts, never a deliverable under results. Do not reuse stale result envelopes.
+Prefer a useful, accurately translated drawing with disclosed minor imperfections over a failure-only reply after a long wait. Acceptance targets practical usability, not absolute cosmetic perfection. A readable but unnecessary line break, small alignment difference or slightly tight spacing may be delivered with warnings after review. Missing/misleading technical content, changed numbers/units, unreadable text, serious overlap obscuring dimensions, wrong bilingual associations or damaged source/geometry remain blocking. Do not invent a numeric quality score or accept a critical error because most objects passed. Evaluate the combined visual impact: widespread minor defects can make the drawing unusable. Stop cosmetic-only iteration when the result is usable; use the existing review, not another full pipeline.
 
-Run `audit-summary` after import. `status=passed` means automatic checks passed; only `deliveryReady=true` permits delivery. Read [visual review](references/visual-audit.md) for source/candidate comparison and the mode-specific review receipt.
+Never overwrite the source. Use a fresh job for a new native attempt; assessment of an unchanged candidate stays in its existing job. Hard failures leave staged drawings under artifacts, not accepted results. When blocked, preserve the best candidate and identify its unresolved regions; if supplied, clearly label it a review draft, not a completed translation. Do not reuse stale result envelopes.
+
+Run `audit-summary` after import. Automatic checks alone do not authorize completed delivery; `deliveryReady=true` does. Each branch supports `deliveryStatus=ready_with_warnings` for reviewed, usable output with minor defects: deliver the file and briefly disclose the returned warnings. `needs_review` means assess the saved candidate, not discard it or retranslate everything; `blocked` means a material defect or invalid evidence remains. Read [visual review](references/visual-audit.md) for source/candidate comparison and the independent mode-specific receipts.
 
 Read compact reports and bounded worklists; do not print whole manifests or detailed layout audits. Stage timing is written to `artifacts/*-timing.json`. Describe speed measurements as CAD processing time unless model/visual time was actually measured.
 

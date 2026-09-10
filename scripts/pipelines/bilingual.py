@@ -83,10 +83,23 @@ class BilingualPipeline:
         if not candidate.is_file() or digest(candidate) != report.get("candidateSha256"): errors.append("bilingual_candidate_missing_or_changed")
         review_path = job / "artifacts" / "bilingual-visual-review.json"
         review = read_report(review_path) if review_path.is_file() else {}
-        visual_passed = (review.get("status") == "passed" and review.get("candidateSha256") == report.get("candidateSha256")
+        # Bilingual acceptance is independent: source/target integrity and unresolved
+        # additions still fail native import; only reviewed cosmetic defects are warnings.
+        warnings = review.get("warnings", [])
+        warnings_valid = isinstance(warnings, list) and all(isinstance(w, str) and w.strip() for w in warnings)
+        visual_passed = (review.get("status") in {"passed", "passed_with_warnings"}
+            and not review.get("blockingIssues") and warnings_valid
+            and (review.get("status") != "passed_with_warnings" or bool(warnings))
+            and review.get("candidateSha256") == report.get("candidateSha256")
             and review.get("sourceSha256") == config["sourceSha256"] and bool(review.get("images"))
             and all((job / "artifacts" / p).is_file() for p in review.get("images", [])))
-        return {"outputMode": self.mode, "status": "failed" if errors else "passed",
+        if review.get("status") == "failed" or review.get("blockingIssues"):
+            errors.append("bilingual_visual_blocking_issues")
+        ready = not errors and visual_passed
+        blocked = bool(errors or review.get("status") == "failed" or review.get("blockingIssues"))
+        return {"outputMode": self.mode, "status": "failed" if blocked else "passed",
             "gate": {"passed": not errors, "errorCodes": errors}, "requiresVisualReview": not visual_passed,
-            "deliveryReady": not errors and visual_passed, "candidate": str(candidate),
+            "deliveryReady": ready, "candidate": str(candidate),
+            "deliveryStatus": "ready_with_warnings" if ready and warnings else "ready" if ready else "blocked" if blocked else "needs_review",
+            "warnings": warnings if ready else [], "blockingIssues": review.get("blockingIssues", []),
             "addedCount": report.get("addedCount", 0), "skippedExistingCount": report.get("skippedExistingCount", 0)}

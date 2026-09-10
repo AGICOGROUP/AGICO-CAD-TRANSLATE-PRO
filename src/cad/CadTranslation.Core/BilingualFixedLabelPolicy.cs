@@ -14,10 +14,14 @@ public sealed record BilingualFixedLabelSample(
 
 public sealed record BilingualFixedLabelSelection(
     IReadOnlyList<string> SuppressChineseIds,
-    IReadOnlyDictionary<string, string> MixedObjectEnglishTextById);
+    IReadOnlyDictionary<string, string> MixedObjectEnglishTextById,
+    IReadOnlyDictionary<string, string> ExistingEnglishIdBySourceId);
 
 public static partial class BilingualFixedLabelPolicy
 {
+    public static bool ContainsEmbeddedEnglish(string source) =>
+        TryKeepEmbeddedEnglish(source, out _);
+
     public static BilingualFixedLabelSelection Select(
         IReadOnlyList<BilingualFixedLabelSample> samples)
     {
@@ -60,9 +64,14 @@ public static partial class BilingualFixedLabelPolicy
             suppressed.Add(pair.Chinese.Id);
         }
 
+        IReadOnlyDictionary<string, string> existingBySource = directPairs
+            .Concat(learnedPairs)
+            .ToDictionary(pair => pair.Chinese.Id, pair => pair.English.Id, StringComparer.Ordinal);
+
         return new BilingualFixedLabelSelection(
             suppressed.OrderBy(id => id, StringComparer.Ordinal).ToArray(),
-            mixed);
+            mixed,
+            existingBySource);
     }
 
     private static bool TryKeepEmbeddedEnglish(string source, out string existingEnglish)

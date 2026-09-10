@@ -3,6 +3,37 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("replacement_local_search_offers_safe_nearby_space_without_leaving_cell", () => {
+        var source = new Rect2(0, 0, 10, 2);
+        var cell = new Rect2(-2, -8, 14, 10);
+        var candidates = ReplaceLocalPlacement.Candidates(source, 10, 2, 2, cell);
+        AssertEx.True(candidates.Any(r => r.Bottom > source.Top));
+        AssertEx.True(candidates.Any(r => r.Top < source.Bottom));
+        AssertEx.True(candidates.All(r => cell.Contains(r)));
+        AssertEx.True(candidates.All(r => Math.Abs(r.Center.X-source.Center.X) <= 12 && Math.Abs(r.Center.Y-source.Center.Y) <= 12));
+        AssertEx.Equal(0, ReplaceLocalPlacement.Candidates(source, 30, 3, 2, cell).Count);
+    }),
+    ("replacement_local_search_does_not_escape_a_tight_title_cell", () => {
+        var cell = new Rect2(0, 0, 10, 2);
+        AssertEx.Equal(0, ReplaceLocalPlacement.Candidates(cell, 11, 2, 2, cell).Count);
+    }),
+    ("replacement_repairs_only_changed_high_risk_records_and_deduplicates", () => {
+        var selected = ReplaceLocalPlacement.Select(new[] {
+            ("a", (string?)"b", "text-overlap", "high"),
+            ("a", (string?)null, "geometry-contact", "high"),
+            ("c", (string?)null, "geometry-overlap", "high"),
+            ("d", (string?)null, "text-overlap", "low") }, new[] {"a", "c", "d"});
+        AssertEx.Equal("a", string.Join(",", selected));
+    }),
+    ("bilingual_title_equivalence_is_bounded_and_preserves_technical_qualifiers", () => {
+        AssertEx.True(BilingualLabelEquivalence.Matches("Designed by", "Design"));
+        AssertEx.True(BilingualLabelEquivalence.Matches("Drawing No.", "DWG. No."));
+        AssertEx.True(BilingualLabelEquivalence.Matches("Discipline Lead", "Professional Leader"));
+        AssertEx.True(!BilingualLabelEquivalence.Matches("Discipline Lead", "Project Lead"));
+        AssertEx.True(!BilingualLabelEquivalence.Matches("Quicklime Silo", "Silo"));
+        AssertEx.True(!BilingualLabelEquivalence.Matches("Pump 1", "Pump 2"));
+        AssertEx.True(!BilingualLabelEquivalence.Matches("Project Name", "Project Manager"));
+    }),
     ("equipment_codes_are_not_embedded_english_translations", () => {
         foreach (string source in new[] {
             "{\\Fisocp,hztxt|c134;MDPX150模块化破碎站（主视图）}",
@@ -22,6 +53,13 @@ var tests = new (string Name, Action Run)[]
             new BilingualFixedLabelSample("label", "MDPX150 破碎站 Crushing Plant",
                 "MDPX150 Crushing Plant", "AcDbMText", "model", new Rect2(0, 0, 100, 10), 10) });
         AssertEx.Equal("MDPX150 Crushing Plant", selection.MixedObjectEnglishTextById["label"]);
+    }),
+    ("bilingual_emergency_search_offers_multiple_contained_positions", () => {
+        Rect2 allowed = new(0, 0, 100, 50);
+        Rect2 source = new(40, 20, 60, 30);
+        Rect2[] candidates = BilingualPlacementPolicy.EmergencyCandidates(allowed, source, 20, 5, 1).ToArray();
+        AssertEx.True(candidates.Length > 4);
+        AssertEx.True(candidates.All(c => allowed.Contains(c)));
     }),
     ("bilingual_occupancy_projects_paper_space_into_inserted_block", () => {
         var instances = new[] {
@@ -192,6 +230,7 @@ var tests = new (string Name, Action Run)[]
     ,("bilingual_fixed_label_matches_inflected_title_block_labels", Tests.BilingualFixedLabelMatchesInflectedTitleBlockLabels)
     ,("bilingual_fixed_label_matches_title_block_synonyms", Tests.BilingualFixedLabelMatchesTitleBlockSynonyms)
     ,("bilingual_fixed_label_keeps_existing_english_inside_mixed_object", Tests.BilingualFixedLabelKeepsExistingEnglishInsideMixedObject)
+    ,("bilingual_inline_detector_skips_existing_target_language_in_same_entity", Tests.BilingualInlineDetectorSkipsExistingTargetLanguageInSameEntity)
     ,("bilingual_fixed_label_matches_stacked_company_name", Tests.BilingualFixedLabelMatchesStackedCompanyName)
     ,("bilingual_fixed_label_learns_repeated_two_column_pairs", Tests.BilingualFixedLabelLearnsRepeatedTwoColumnPairs)
     ,("technical_code_inside_chinese_label_is_not_treated_as_bilingual", Tests.TechnicalCodeInsideChineseLabelIsNotTreatedAsBilingual)
@@ -458,6 +497,9 @@ internal static class Tests
         AssertEx.SequenceEqual(
             ["cn-approve", "cn-check", "cn-design"],
             selection.SuppressChineseIds);
+        AssertEx.Equal("en-approve", selection.ExistingEnglishIdBySourceId["cn-approve"]);
+        AssertEx.Equal("en-check", selection.ExistingEnglishIdBySourceId["cn-check"]);
+        AssertEx.Equal("en-design", selection.ExistingEnglishIdBySourceId["cn-design"]);
     }
 
     // Break caught: an existing concise English title-block label is missed when
@@ -508,6 +550,12 @@ internal static class Tests
 
         AssertEx.Equal(0, selection.SuppressChineseIds.Count);
         AssertEx.Equal("{\\W0.6;MAJOR}", selection.MixedObjectEnglishTextById["mixed"]);
+    }
+
+    public static void BilingualInlineDetectorSkipsExistingTargetLanguageInSameEntity()
+    {
+        AssertEx.True(BilingualFixedLabelPolicy.ContainsEmbeddedEnglish(
+            "{\\fArial|b0|i0|c0|p0;6.04 \\f宋体|b0|i0|c0|p0;冷却器\\P\\fArial|b0|i0|c0|p0;6.04 Multi-tube Cooler}"));
     }
 
     public static void BilingualFixedLabelMatchesStackedCompanyName()

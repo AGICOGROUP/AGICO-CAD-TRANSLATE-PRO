@@ -27,10 +27,22 @@ internal static class DrawingExporter
     {
         var records = new List<ManifestRecord>();
         var unsupported = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var unusedBlocks = new SortedDictionary<string, int>(StringComparer.Ordinal);
         using (Transaction transaction = database.TransactionManager.StartTransaction())
         {
+            // Bilingual additions apply to placed drawing content. Dormant block
+            // library definitions are retained in the DWG without translation.
+            string[]? activePrefixes = null;
+            if (string.Equals(context.Config.OutputMode, "bilingual", StringComparison.OrdinalIgnoreCase))
+                activePrefixes = BlockInstanceWalker.Capture(database, transaction)
+                    .Select(i => $"ROOT/BLOCK/{i.DefinitionId}/").Distinct().ToArray();
             foreach (WalkItem item in EntityWalker.Walk(database, transaction))
             {
+                if (activePrefixes is not null && !activePrefixes.Any(p => item.OwnerPath.StartsWith(p, StringComparison.Ordinal)))
+                {
+                    unusedBlocks[item.OwnerPath] = unusedBlocks.GetValueOrDefault(item.OwnerPath) + 1;
+                    continue;
+                }
                 ITextAdapter? adapter = Adapters.FirstOrDefault(candidate => candidate.CanHandle(item.Value));
                 if (adapter is null)
                 {
@@ -49,6 +61,9 @@ internal static class DrawingExporter
         if (ordered.Select(record => record.RecordId).Distinct(StringComparer.Ordinal).Count() != ordered.Length) throw new CommandProtocolException("duplicate_record_id", "Export produced duplicate record IDs.");
         string jsonl = string.Concat(ordered.Select(record => JsonSerializer.Serialize(record, JsonDefaults.Options) + "\n"));
         AtomicFile.WriteUtf8(context.Config.ManifestPath, jsonl);
+        if (string.Equals(context.Config.OutputMode, "bilingual", StringComparison.OrdinalIgnoreCase))
+            NativeDrawing.Report(context, "bilingual-scope.json", new { scope = "model-and-all-layout-reachable-blocks",
+                activeRecordCount = ordered.Length, preservedUnusedBlocks = unusedBlocks });
         AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "export-summary.json"), JsonSerializer.Serialize(new { recordCount = ordered.Length, typeCounts = ordered.GroupBy(record => record.ObjectType).ToDictionary(group => group.Key, group => group.Count()), unsupported }, JsonDefaults.Options));
         context.VerifySourceAndWorkingHashes();
         return ordered.Length;

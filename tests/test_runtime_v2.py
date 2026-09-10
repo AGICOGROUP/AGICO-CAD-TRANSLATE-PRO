@@ -56,7 +56,7 @@ class RuntimeV2Tests(unittest.TestCase):
                 Path(config["outputPath"]).write_bytes(b"tampered")
                 self.assertEqual("failed", cad_translate.summarize_audit(job)["status"])
 
-    def test_overflow_stays_staged_and_never_publishes(self):
+    def test_estimated_overflow_uses_final_visual_review_without_duplicate_assessment(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             job, config, translations = self.fixture(root)
@@ -64,10 +64,99 @@ class RuntimeV2Tests(unittest.TestCase):
                 self.native_result(job, json.loads(path.read_text(encoding="utf-8")), overflow=True)
                 return 0
             with mock.patch.object(cad_translate, "require_ready"), mock.patch.object(cad_translate, "run_once", side_effect=run):
-                with self.assertRaisesRegex(ValueError, "candidate gate failed"):
-                    cad_translate.run_import(job, translations, root)
-            self.assertFalse(Path(config["outputPath"]).exists())
-            self.assertTrue((job / "artifacts" / "replace-staged.dwg").exists())
+                self.assertEqual(0, cad_translate.run_import(job, translations, root))
+            self.assertTrue(Path(config["outputPath"]).exists())
+            self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+            self.visual_review(job, config, "passed_with_warnings")
+            summary = cad_translate.summarize_audit(job)
+            self.assertTrue(summary["deliveryReady"])
+            self.assertEqual(1, summary["segmentOverflowCount"])
+
+    def visual_review(self, job, config, status):
+        for name in ("source.png", "candidate.png"):
+            (job / "artifacts" / name).write_bytes(b"test evidence placeholder")
+        review = {"status": status, "sourceSha256": config["sourceSha256"],
+            "candidateSha256": digest(config["outputPath"]), "images": ["source.png", "candidate.png"],
+            "warnings": ["One readable label has a cosmetic line break."] if status == "passed_with_warnings" else [],
+            "blockingIssues": []}
+        write_report(job / "artifacts" / f"{config['outputMode']}-visual-review.json", review)
+        return review
+
+    def test_both_modes_deliver_disclosed_minor_issues_but_not_explicit_blockers(self):
+        for mode in ("replace", "bilingual"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                job, config, translations=self.fixture(root,mode)
+                def run(op,path,working,host):
+                    self.native_result(job,json.loads(path.read_text(encoding="utf-8")))
+                    return 0
+                with mock.patch.object(cad_translate,"require_ready"), mock.patch.object(cad_translate,"run_once",side_effect=run):
+                    self.assertEqual(0,cad_translate.run_import(job,translations,root))
+                review=self.visual_review(job,config,"passed_with_warnings")
+                summary=cad_translate.summarize_audit(job)
+                self.assertTrue(summary["deliveryReady"])
+                self.assertEqual("ready_with_warnings",summary["deliveryStatus"])
+                self.assertEqual(review["warnings"],summary["warnings"])
+                review["warnings"]=[]
+                write_report(job / "artifacts" / f"{mode}-visual-review.json",review)
+                self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+                review["status"]="passed"
+                review["blockingIssues"]=["A capacity value is hidden by another label."]
+                write_report(job / "artifacts" / f"{mode}-visual-review.json",review)
+                self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+                self.assertEqual("blocked",cad_translate.summarize_audit(job)["deliveryStatus"])
+
+    def test_layout_flags_share_final_review_and_still_block_known_defects_or_stale_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            job,config,translations=self.fixture(root)
+            def run(op,path,working,host):
+                self.native_result(job,json.loads(path.read_text(encoding="utf-8")))
+                write_report(job / "artifacts" / "replace-layout-audit.json", {"texts":[],"missingBlockInstancePaths":[],
+                    "manualReview":[{"code":"text-overlap","recordId":"a","otherRecordId":"b","level":"high"}]})
+                return 0
+            with mock.patch.object(cad_translate,"require_ready"), mock.patch.object(cad_translate,"run_once",side_effect=run):
+                self.assertEqual(0,cad_translate.run_import(job,translations,root))
+            self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+            review=self.visual_review(job,config,"passed")
+            summary=cad_translate.summarize_audit(job)
+            self.assertTrue(summary["deliveryReady"])
+            self.assertEqual(["a","b"],summary["layoutReviewRecordIds"])
+            review["blockingIssues"]=["Confirmed label overlap hides a dimension."]
+            write_report(job / "artifacts" / "replace-visual-review.json",review)
+            self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+            review["blockingIssues"]=[]
+            write_report(job / "artifacts" / "replace-visual-review.json",review)
+            Path(config["outputPath"]).write_bytes(b"changed after review")
+            self.assertFalse(cad_translate.summarize_audit(job)["deliveryReady"])
+
+    def test_english_with_cjk_punctuation_is_not_untranslated_chinese(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job,config,translations=self.fixture(Path(tmp))
+            row=json.loads(translations.read_text(encoding="utf-8"))
+            for target in ("Pump（standby）", "Pump，standby。", "Pump － standby"):
+                with self.subTest(target=target):
+                    row["translatedText"]=target
+                    translations.write_text(json.dumps(row,ensure_ascii=False),encoding="utf-8")
+                    result=cad_translate.check_translations(Path(config["manifestPath"]),translations,output_mode="replace")
+                    self.assertEqual("passed",result["status"])
+            row["translatedText"]="Pump（备用泵）"
+            translations.write_text(json.dumps(row,ensure_ascii=False),encoding="utf-8")
+            self.assertEqual("failed",cad_translate.check_translations(Path(config["manifestPath"]),translations,output_mode="replace")["status"])
+
+    def test_warning_review_cannot_override_native_integrity_failure(self):
+        for mode in ("replace","bilingual"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp)
+                job,config,translations=self.fixture(root,mode)
+                def run(op,path,working,host):
+                    self.native_result(job,json.loads(path.read_text(encoding="utf-8")))
+                    write_report(job / "artifacts" / f"{mode}-structure.json",{"status":"failed"})
+                    return 0
+                with mock.patch.object(cad_translate,"require_ready"), mock.patch.object(cad_translate,"run_once",side_effect=run):
+                    with self.assertRaises(ValueError): cad_translate.run_import(job,translations,root)
+                self.assertFalse(Path(config["outputPath"]).exists())
+                self.assertTrue((job / "artifacts" / f"{mode}-staged.dwg").exists())
 
     def test_sealed_mode_and_direction_cannot_be_changed(self):
         for field, value in (("outputMode", "bilingual"), ("targetLanguage", "zh"), ("pipelineVersion", "1.0")):

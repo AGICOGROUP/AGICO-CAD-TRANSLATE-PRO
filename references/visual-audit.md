@@ -10,11 +10,15 @@ Use world-space extents from actual placed instances for detail windows; block-d
 python scripts/render_review.py --drawing "source.dwg" --output "jobs/example/artifacts/source-overview.png"
 python scripts/render_review.py --drawing "jobs/example/results/candidate.dwg" --output "jobs/example/artifacts/candidate-overview.png"
 # For a detail append --window left bottom right top; use identical bounds for both images.
+# Bilingual: batch matching overviews and all placed instances of selected source handles.
+python scripts/render_review.py --job "jobs/example" --handles "AB,CD"
 ```
 
-The renderer works on a disposable copy. Do not render directly into the original DWG or send localized QUIT/save responses. Choose fresh image names; existing images are not overwritten.
+The renderer works on a disposable copy, sets a world-plan view and disables quick-text boxes before zooming to native world bounds. Batch mode reads `bilingual-review-windows.json`, keeps each selected block instance and writes image associations to `review-render-plan.json`; it does not approve the images. Use explicit layout review for paper-space windows. Do not render directly into the original DWG or send localized QUIT/save responses. Choose fresh image names; existing images are not overwritten.
 
-Replacement acceptance: accurate target-only content, readable fitting, no new overlap or crossing a cell/diagram boundary. Bilingual acceptance: unchanged readable source, translation clearly associated with its source, no new overlap, no repeated translation, unchanged non-text content. Short target labels must remain single-line when their measured width fits available whitespace; wrapping remains valid when a safe single line does not fit. Check rotated/nested block instances individually when not covered by the overview. If any defect exists, record `failed` and create a fresh corrected job; never mark an unresolved drawing delivered.
+Replacement acceptance: accurate target-only content and readable fitting without material obstruction or ambiguous cell/diagram association. Bilingual acceptance: unchanged readable source, complete and clearly associated translations, no misleading duplication and unchanged non-text content. Short labels should remain single-line when space permits; an unnecessary but readable wrap is cosmetic, not by itself a failed drawing. Check rotated/nested block instances individually when not covered by the overview.
+
+Use `passed` for usable output without outstanding defects, `passed_with_warnings` for usable output with localized cosmetic imperfections, and `failed` for material defects. List minor imperfections in `warnings` and material defects in `blockingIssues`. Never downgrade missing/misleading translations, wrong numbers/units, unreadable glyphs, serious text/dimension obstruction, wrong row/source association or source/geometry damage to cosmetic warnings. Assess overall usability as well as individual defects; do not claim a 9/10 score without a defined evaluation. Do not rebuild a usable drawing just for cosmetic perfection. If blocked, retain the best candidate and give the user concrete remaining issues, not only a generic failure message.
 
 After actual inspection, write the selected receipt under that job's `artifacts`:
 
@@ -24,8 +28,12 @@ After actual inspection, write the selected receipt under that job's `artifacts`
   "sourceSha256": "exact sourceSha256 from config/export-job.json",
   "candidateSha256": "exact hash from the selected mode's final receipt",
   "images": ["source-overview.png", "candidate-overview.png", "source-title.png", "candidate-title.png"],
-  "notes": "Describe inspected regions and findings."
+  "notes": "Describe inspected regions and findings.",
+  "warnings": [],
+  "blockingIssues": []
 }
 ```
 
-`images` are real paths relative to artifacts. Include source and candidate evidence. Re-run `audit-summary`; only `deliveryReady=true` is deliverable. Any changed candidate hash invalidates the previous review.
+For `passed_with_warnings`, supply a nonempty list of concise warning strings. Assess layout and readability together in this final visual review; no separate `layoutAssessment`, per-record approval list or overflow sign-off is required. Use `layoutReviewRecordIds` and `segmentOverflowCount` as pointers to relevant detail windows, grouping adjacent findings in one view. Judge actual engineering readability: a geometric contact may be an innocuous touch or a serious obstruction. Record the inspected regions and outcome in `notes`; if a material defect remains, use `failed` with `blockingIssues`.
+
+`images` are real paths relative to artifacts. Include source and candidate evidence. Re-run `audit-summary`; `deliveryReady=true` with `deliveryStatus=ready_with_warnings` is valid delivery with the returned warnings disclosed. A failed candidate may be shared only as an explicitly labeled review draft. Any changed candidate hash invalidates the previous review. Both branches own their review logic; replacement reviews cannot clear bilingual missing additions or source changes.

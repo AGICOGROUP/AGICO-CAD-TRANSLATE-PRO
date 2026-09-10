@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AutoCADDir Condition="'$(AutoCADDir)'==''">E:\AUTOCAD2025\AutoCAD 2025</AutoCADDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/cad/CadTranslation.AutoCAD2025/CadTranslation.AutoCAD2025.csproj" />
+    <Reference Include="AcCoreMgd" HintPath="$(AutoCADDir)\accoremgd.dll" Private="false" />
+    <Reference Include="AcDbMgd" HintPath="$(AutoCADDir)\acdbmgd.dll" Private="false" />
+  </ItemGroup>
+</Project>

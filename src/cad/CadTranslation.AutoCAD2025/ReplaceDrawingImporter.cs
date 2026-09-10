@@ -29,6 +29,7 @@ internal static class ReplaceDrawingImporter
 
         string temporaryOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
         string auditOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
+        string correctedOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
         ResolvedWrite[] resolved;
         ResolvedWrite[] changed;
         LayoutOptimizationResult layoutResult;
@@ -88,6 +89,30 @@ internal static class ReplaceDrawingImporter
                 layoutBaseline,
                 layoutResult,
                 passIndex: 1);
+            if (layoutAudit.ManualReview.Count > 0)
+            {
+                var corrections = ReplaceLocalCorrection.Apply(workingDatabase, layoutBaseline, layoutAudit);
+                bool accepted = false;
+                if (corrections.Length > 0)
+                {
+                    var correctedLayout = LayoutOptimizer.MergeCorrections(layoutResult, corrections);
+                    SaveTemporaryOutput(workingDatabase, correctedOutput, Path.GetExtension(context.Config.WorkingPath));
+                    File.Copy(correctedOutput, auditOutput, overwrite: true);
+                    var correctedAudit = AuditTemporaryOutput(auditOutput, Path.GetExtension(context.Config.WorkingPath), layoutBaseline, correctedLayout, 2);
+                    var originalRisks = layoutAudit.ManualReview.Select(r => (r.RecordId, r.OtherRecordId, r.Code, r.InstancePath, r.Detail)).ToHashSet();
+                    accepted = correctedAudit.ManualReview.Count < layoutAudit.ManualReview.Count &&
+                        correctedAudit.ManualReview.All(r => originalRisks.Contains((r.RecordId, r.OtherRecordId, r.Code, r.InstancePath, r.Detail)));
+                    if (accepted)
+                    {
+                        File.Copy(correctedOutput, temporaryOutput, overwrite: true);
+                        layoutResult = correctedLayout;
+                        layoutAudit = correctedAudit;
+                    }
+                }
+                NativeDrawing.Report(context, "replace-local-correction.json", new { passes = 1, proposedCorrections = corrections.Length,
+                    accepted, correctedRecordIds = accepted ? corrections.Select(c => c.RecordId).ToArray() : Array.Empty<string>(),
+                    remainingHighRisks = layoutAudit.ManualReview.Count });
+            }
             AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, $"{artifactPrefix}-layout-adjustments.json"),
                 JsonSerializer.Serialize(layoutResult, JsonDefaults.Options));
             AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, $"{artifactPrefix}-layout-audit.json"),
@@ -150,6 +175,7 @@ internal static class ReplaceDrawingImporter
         {
             TryDeleteTemporary(auditOutput);
             TryDeleteTemporary(temporaryOutput);
+            TryDeleteTemporary(correctedOutput);
         }
     }
 
@@ -285,7 +311,7 @@ internal static class ReplaceDrawingImporter
         else if (extension.Equals(".dxf", StringComparison.OrdinalIgnoreCase)) reopened.DxfIn(temporaryOutput, null);
         else throw new CommandProtocolException("unsupported_output_format", "Candidate output must be DWG or DXF.");
         reopened.CloseInput(true);
-        return LayoutAuditor.Audit(reopened, baseline, optimization, passIndex);
+        return LayoutAuditor.Audit(reopened, baseline, optimization, passIndex, refineGeometry: true);
     }
 
     private sealed record ResolvedWrite(ObjectId ObjectId, ITextAdapter Adapter, ManifestRecord Manifest, string CurrentRawText, string RestoredText);

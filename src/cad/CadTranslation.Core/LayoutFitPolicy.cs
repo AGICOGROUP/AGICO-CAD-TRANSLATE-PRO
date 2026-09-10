@@ -152,6 +152,24 @@ public static class BilingualPlacementPolicy
         return new Rect2(left, cell.Bottom + margin, left + width, cell.Bottom + margin + height);
     }
 
+    public static IReadOnlyList<Rect2> EmergencyCandidates(Rect2 allowed, Rect2 source, double width, double height, double margin)
+    {
+        if (width <= 0 || height <= 0 || width + margin * 2 > allowed.Width || height + margin * 2 > allowed.Height)
+            return Array.Empty<Rect2>();
+        double[] xs = { source.Left, source.Center.X - width / 2, source.Right - width,
+            allowed.Left + margin, allowed.Center.X - width / 2, allowed.Right - margin - width };
+        double[] ys = { source.Bottom - margin - height, source.Top + margin,
+            allowed.Bottom + margin, allowed.Center.Y - height / 2, allowed.Top - margin - height };
+        return xs.SelectMany(x => ys.Select(y => new Rect2(
+                Math.Clamp(x, allowed.Left + margin, allowed.Right - margin - width),
+                Math.Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height),
+                Math.Clamp(x, allowed.Left + margin, allowed.Right - margin - width) + width,
+                Math.Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height) + height)))
+            .Distinct()
+            .OrderBy(r => Math.Pow(r.Center.X - source.Center.X, 2) + Math.Pow(r.Center.Y - source.Center.Y, 2))
+            .ToArray();
+    }
+
     public static IReadOnlyList<double> CandidateWidths(
         double allowedWidth,
         double sourceWidth,

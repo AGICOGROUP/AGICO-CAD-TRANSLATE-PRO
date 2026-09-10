@@ -18,7 +18,8 @@ internal static class LayoutAuditor
         Database candidate,
         CadLayoutBaseline baseline,
         LayoutOptimizationResult optimization,
-        int passIndex)
+        int passIndex,
+        bool refineGeometry = false)
     {
         Dictionary<string, LayoutAdjustment> adjustmentByRecord = optimization.Adjustments
             .GroupBy(adjustment => adjustment.RecordId, StringComparer.Ordinal)
@@ -66,7 +67,7 @@ internal static class LayoutAuditor
         var risks = new List<LayoutAuditRiskRow>();
         AuditWorldContainmentAndAnchors(baseline, candidateTexts, risks);
         AuditLocalTextOverlap(candidateTexts, risks);
-        AuditProtectedGeometry(baseline, candidateTexts, risks);
+        AuditProtectedGeometry(baseline, candidateTexts, risks, candidate, transaction, refineGeometry);
 
         // Unreferenced definitions are retained and translated, but have no placed
         // geometry in any model/paper layout. Keep their findings as advisory.
@@ -248,7 +249,8 @@ internal static class LayoutAuditor
     private static void AuditProtectedGeometry(
         CadLayoutBaseline baseline,
         IReadOnlyList<CandidateText> texts,
-        ICollection<LayoutAuditRiskRow> risks)
+        ICollection<LayoutAuditRiskRow> risks,
+        Database candidate, Transaction transaction, bool refineGeometry)
     {
         foreach (CadDefinitionTopology definition in baseline.Definitions)
         {
@@ -271,8 +273,16 @@ internal static class LayoutAuditor
                         continue;
                     }
 
+                    bool? contact = null;
+                    if (refineGeometry)
+                    {
+                        var id = candidate.GetObjectId(false, geometry.ObjectId.Handle, 0);
+                        contact = NativeGeometryContact.Intersects((Entity)transaction.GetObject(id, OpenMode.ForRead), text.Bounds);
+                        if (contact == false) continue;
+                    }
+
                     risks.Add(new LayoutAuditRiskRow(
-                        "geometry-overlap",
+                        contact == true ? "geometry-contact" : "geometry-overlap",
                         risk.Level.ToString().ToLowerInvariant(),
                         text.Baseline.RecordId,
                         null,
@@ -281,7 +291,7 @@ internal static class LayoutAuditor
                         $"definition:{definition.Name}",
                         risk.NewOverlapRatio,
                         text.Bounds,
-                        $"New overlap with protected {geometry.ObjectType}."));
+                        $"{(contact == true ? "Confirmed curve contact" : "Unconfirmed bounding-box overlap")} with protected {geometry.ObjectType} at {geometry.ObjectId.Handle}."));
                 }
             }
         }
