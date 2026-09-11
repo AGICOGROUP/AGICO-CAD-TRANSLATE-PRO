@@ -65,6 +65,10 @@ class BilingualPipeline:
         if pre["status"] != "passed": raise ValueError("Bilingual target-only translation gate failed.")
         code, staged = launch_import(job, translations, root, timeout, config, runtime)
         if code: return code
+        return self.accept_candidate(job, staged, config, runtime)
+
+    def accept_candidate(self, job, staged, config, runtime, output=None):
+        output = Path(output or config["outputPath"])
         checked = self.check_candidate(job / "artifacts" / "bilingual-candidate.jsonl", job / "artifacts" / "bilingual-language.json")
         native = read_report(job / "artifacts" / "bilingual-native-check.json")
         structure = read_report(job / "artifacts" / "bilingual-structure.json")
@@ -72,9 +76,11 @@ class BilingualPipeline:
         if (checked["status"] != "passed" or structure["status"] != "passed" or layout.get("manualReview")
             or native["candidateSha256"] != digest(staged)):
             raise ValueError("Bilingual candidate gate failed; staged drawing retained in artifacts.")
-        publish_candidate(staged, config["outputPath"])
+        publish_candidate(staged, output)
+        from task_recovery import publish_binding
+        publish_binding(job, output)
         write_report(job / "artifacts" / "bilingual-final.json", {"status": "passed", "outputMode": "bilingual",
-            "candidateSha256": native["candidateSha256"], "requiresVisualReview": True,
+            "candidateSha256": native["candidateSha256"], "candidatePath": str(output), "requiresVisualReview": True,
             "sourceSha256": config["sourceSha256"], "addedCount": checked["addedCount"],
             "skippedExistingCount": checked["skippedExistingCount"]})
         return 0
@@ -85,10 +91,13 @@ class BilingualPipeline:
         report = read_report(path) if path.is_file() else {}
         if report.get("status") != "passed" or report.get("outputMode") != self.mode: errors.append("bilingual_final_missing_or_failed")
         config = read_report(job / "config" / "export-job.json")
-        candidate = Path(config["outputPath"])
+        candidate = Path(report.get("candidatePath", config["outputPath"]))
         if not candidate.is_file() or digest(candidate) != report.get("candidateSha256"): errors.append("bilingual_candidate_missing_or_changed")
         review_path = job / "artifacts" / "bilingual-visual-review.json"
         review = read_report(review_path) if review_path.is_file() else {}
+        if (review.get("candidateSha256") != report.get("candidateSha256")
+                or review.get("sourceSha256") != config["sourceSha256"]):
+            review = {}
         # Bilingual acceptance is independent: source/target integrity and unresolved
         # additions still fail native import; only reviewed cosmetic defects are warnings.
         warnings = review.get("warnings", [])

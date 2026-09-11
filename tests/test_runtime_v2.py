@@ -15,6 +15,7 @@ class RuntimeV2Tests(unittest.TestCase):
         job = root / "job"
         config = cad_translate.prepare_export_job(source, job, source_language, target_language, mode)
         row = {"recordId": "a", "inputHash": "h", "plainText": "泵" if source_language == "zh-CN" else "Pump", "protectedTokens": []}
+        row["rawText"] = row["plainText"]
         Path(config["manifestPath"]).write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
         write_report(Path(config["resultPath"]), {"status": "succeeded"})
         cad_translate.write_export_seal(job, config)

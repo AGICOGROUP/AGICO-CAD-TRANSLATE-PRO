@@ -13,6 +13,7 @@ from pipelines import get_pipeline
 from translation_work import direction, language, needs_translation, groups, job_groups, layout_hint
 from job_timing import record as record_timing
 from bilingual_work import enabled as inline_review_enabled, inline_candidates, reviewed_reuse
+import text_validation
 PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 AUTOCAD_2025_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows")
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
@@ -26,7 +27,7 @@ TARGET_LANGUAGE_RESIDUE = re.compile(
 DIAGNOSTIC_EXAMPLE_LIMIT = 20
 SUPPORTED_SOURCE_LANGUAGES = {"zh", "zh-cn", "zh-hans"}
 SUPPORTED_TARGET_LANGUAGES = {"en", "en-us", "en-gb", "fr", "fr-fr", "fr-ca"}
-DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800}
+DEFAULT_STAGE_TIMEOUT_SECONDS = {"export": 300, "import": 1800, "compose": 1800, "inspect": 600, "correct": 900}
 OUTPUT_MODES = {"replace", "bilingual"}
 LEGACY_OUTPUT_MODE_ALIASES = {"english": "replace"}
 
@@ -49,6 +50,8 @@ def autocad_release(autocad_root: Path) -> str:
     return releases[year]
 
 def runtime_plugin_dir(autocad_root: Path) -> Path:
+    if os.environ.get("CAD_TRANSLATE_PLUGIN_DIR"):
+        return absolute(os.environ["CAD_TRANSLATE_PLUGIN_DIR"])
     return AUTOCAD_2027_PLUGIN_DIR if autocad_release(autocad_root) == "R26.0" else AUTOCAD_2025_PLUGIN_DIR
 
 def profile(release: str = "R25.0") -> dict[str, object]:
@@ -614,7 +617,9 @@ def run_once(
     plugin = (runtime_plugin_dir(autocad_root) / PLUGIN_FILES[0]).resolve(strict=True)
     if any(ch in str(plugin) + str(working) for ch in ('\r', '\n', '"')): raise ValueError("Unsafe AutoCAD path")
     profile_name = str(profile(autocad_release(autocad_root))["name"])
-    script = config_path.parent / f"{operation}.scr"
+    attempt = operation if config_path.stem == f"{operation}-job" else config_path.stem
+    fingerprints = {name: sha256(plugin.parent / name) for name in PLUGIN_FILES if (plugin.parent / name).is_file()}
+    script = config_path.parent / f"{attempt}.scr"
     script.write_text(f'_.NETLOAD\n"{plugin}"\nCADTRANS_{operation.upper()}\n_.QUIT\n', encoding="utf-8", newline="\n")
     command = [str(absolute(autocad_root) / "accoreconsole.exe"), "/product", "ACAD", "/p", profile_name, "/nologo", "/nohardware", "/i", str(working), "/s", str(script)]
     environment = os.environ.copy(); environment["CADTRANS_JOB_CONFIG"] = str(config_path); environment["CADTRANS_DIAGNOSTIC_DIRECTORY"] = str(config_path.parent.parent / "artifacts")
@@ -659,7 +664,7 @@ def run_once(
     if stage_timed_out:
         terminate_process_tree(process)
         stdout, stderr = process.communicate()
-        timeout_log = config_path.parent.parent / "artifacts" / f"{operation}-timeout.log"
+        timeout_log = config_path.parent.parent / "artifacts" / f"{attempt}-timeout.log"
         timeout_log.write_text("Core Console timed out; process tree terminated.\n" + decode_output(stdout) + decode_output(stderr), encoding="utf-8")
         # AutoCAD can finish the plugin operation and save the drawing, then hang
         # while dismissing a font/save warning during QUIT.  The plugin result
@@ -670,10 +675,12 @@ def run_once(
         returncode = 0 if envelope_status == "succeeded" else 1
     else:
         returncode = process.returncode
-    (config_path.parent.parent / "artifacts" / f"{operation}-console.log").write_text(decode_output(stdout) + decode_output(stderr), encoding="utf-8")
-    metrics_path = config_path.parent.parent / "artifacts" / f"{operation}-timing.json"
+    (config_path.parent.parent / "artifacts" / f"{attempt}-console.log").write_text(decode_output(stdout) + decode_output(stderr), encoding="utf-8")
+    metrics_path = config_path.parent.parent / "artifacts" / f"{attempt}-timing.json"
     metrics_path.write_text(json.dumps({"operation": operation, "seconds": round(time.monotonic() - started, 3),
-        "exitCode": returncode, "timedOut": stage_timed_out}), encoding="utf-8")
+        "exitCode": returncode, "timedOut": stage_timed_out,
+        "pluginDirectory": str(plugin.parent), "pluginSha256": fingerprints,
+        "configPath": str(config_path), "resultPath": str(result_file)}), encoding="utf-8")
     return returncode
 
 def _run_stage(
@@ -745,17 +752,57 @@ def _require_succeeded_result(result_path: Path, operation: str) -> None:
     if not result_path.is_file():
         raise RuntimeError(f"{operation} did not produce a result envelope.")
     try:
-        status_value = json.loads(result_path.read_text(encoding="utf-8")).get("status")
+        envelope = json.loads(result_path.read_text(encoding="utf-8"))
+        status_value = envelope.get("status")
     except json.JSONDecodeError as error:
         raise RuntimeError(f"{operation} result envelope is invalid JSON.") from error
     if status_value != "succeeded":
-        raise RuntimeError(f"{operation} result envelope is not succeeded.")
+        details = json.dumps(envelope.get("errors") or envelope, ensure_ascii=False)
+        raise RuntimeError(f"{operation} result envelope is not succeeded: {details}; result={result_path}")
+
+
+def authoritative_preflight(job: Path, manifest: Path, translations: Path) -> dict[str, object]:
+    from pipeline_io import write_report
+    report = text_validation.validate_batch(manifest, translations)
+    path = job / "artifacts/text-validation.json"
+    write_report(path, report)
+    if not report["isValid"]:
+        raise ValueError("Core text validation failed: " + json.dumps(report["errors"], ensure_ascii=False) + f"; report={path}")
+    return report
+
+
+def run_resume(job: Path, autocad_root: Path, timeout_seconds: int | None = None, translated: Path | None = None):
+    import types
+    from task_recovery import resume
+    return resume(absolute(job), autocad_root, timeout_seconds, types.SimpleNamespace(**globals()),
+                  absolute(translated) if translated is not None else None)
+
+
+def run_correct(job: Path, corrections: Path, autocad_root: Path, timeout_seconds: int | None = None):
+    import types
+    from task_recovery import correct
+    return correct(absolute(job), absolute(corrections), autocad_root, timeout_seconds, types.SimpleNamespace(**globals()))
 
 def status(job: Path) -> dict[str, object]:
     job = absolute(job); candidates = list((job / "results").glob("candidate.*")) if job.is_dir() else []
     logical_report = job / "artifacts" / "logical-flow-report.json"
     language_report = job / "artifacts" / "postcomposition-language-check.json"
-    return {"job": str(job), "exists": job.is_dir(), "exportConfig": (job / "config" / "export-job.json").is_file(), "manifest": (job / "exchange" / "manifest.input.jsonl").is_file(), "candidate": str(candidates[0]) if candidates else None, "logicalFlowReport": str(logical_report) if logical_report.is_file() else None, "postcompositionLanguageReport": str(language_report) if language_report.is_file() else None}
+    report = {"job": str(job), "exists": job.is_dir(), "exportConfig": (job / "config" / "export-job.json").is_file(), "manifest": (job / "exchange" / "manifest.input.jsonl").is_file(), "candidate": str(candidates[0]) if candidates else None, "logicalFlowReport": str(logical_report) if logical_report.is_file() else None, "postcompositionLanguageReport": str(language_report) if language_report.is_file() else None}
+    if report["exportConfig"]:
+        from task_recovery import load_job, retained_candidate
+        import types
+        try:
+            config = load_job(job, types.SimpleNamespace(**globals()))
+            candidate, _ = retained_candidate(job, config)
+            report.update(candidate=str(candidate) if candidate else None, nextAction="resume")
+            if (job / "artifacts" / f"{config['outputMode']}-final.json").is_file():
+                summary = get_pipeline(config["outputMode"]).summarize(job)
+                report.update(deliveryReady=summary["deliveryReady"], nextAction="deliver" if summary["deliveryReady"] else "review" if summary["gate"]["passed"] else "resume")
+        except (ValueError, RuntimeError, OSError) as error:
+            report.update(status="blocked", detail=str(error), nextAction="repair-job")
+    else:
+        report["nextAction"] = "export"
+    return report
 
 def _bounded_cli_output(report: dict[str, object]) -> dict[str, object]:
     output = dict(report)
@@ -794,6 +841,9 @@ def main(argv: list[str] | None = None) -> int:
     prepared.add_argument("--existing-inline-handles", help="Comma-separated current handles reviewed as complete inline bilingual pairs")
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
     imported = sub.add_parser("import"); imported.add_argument("--job", type=Path, required=True); imported.add_argument("--translations", type=Path, required=True); imported.add_argument("--timeout-seconds", type=int)
+    resumed = sub.add_parser("resume"); resumed.add_argument("--job", type=Path, required=True); resumed.add_argument("--timeout-seconds", type=int)
+    resumed.add_argument("--translated", type=Path, help="Compact repaired translations; existing valid rows are retained")
+    corrected = sub.add_parser("correct"); corrected.add_argument("--job", type=Path, required=True); corrected.add_argument("--corrections", type=Path, required=True); corrected.add_argument("--timeout-seconds", type=int)
     checked = sub.add_parser("check-translations"); checked.add_argument("--job", type=Path, required=True); checked.add_argument("--translations", type=Path, required=True); checked.add_argument("--report", type=Path)
     audited = sub.add_parser("audit-summary"); audited.add_argument("--job", type=Path, required=True)
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
@@ -802,6 +852,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars, args.existing_inline_handles), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0
     elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}
+    elif args.command == "resume":
+        output = run_resume(args.job, args.autocad_root, args.timeout_seconds, args.translated)
+        code = output.get("exitCode", 1 if output.get("status") in {"failed", "translation_required"} else 0)
+    elif args.command == "correct":
+        output = run_correct(args.job, args.corrections, args.autocad_root, args.timeout_seconds)
+        code = output.get("exitCode", 1 if output.get("status") == "failed" else 0)
     elif args.command == "check-translations":
         job = absolute(args.job)
         output = _bounded_cli_output(check_translations(job / "exchange" / "manifest.input.jsonl", absolute(args.translations), args.report, read_output_mode(job)))

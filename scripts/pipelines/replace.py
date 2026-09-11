@@ -77,6 +77,10 @@ class ReplacePipeline:
         if pre["status"] != "passed": raise ValueError(f"Replacement translation gate failed: chinese_residual_count={pre['chineseResidualCount']}, invalid_translation_count={pre['invalidTranslationCount']}")
         code, staged = launch_import(job, translations, root, timeout, config, runtime)
         if code: return code
+        return self.accept_candidate(job, staged, config, runtime)
+
+    def accept_candidate(self, job, staged, config, runtime, output=None):
+        output = Path(output or config["outputPath"])
         adjustment_path = job / "artifacts" / "replace-layout-adjustments.json"
         if adjustment_path.is_file():
             write_report(job / "artifacts" / "replace-readability-review.json",
@@ -93,9 +97,11 @@ class ReplacePipeline:
         review_ids = sorted({value for risk in layout.get("manualReview", [])
             for value in (risk.get("recordId"), risk.get("otherRecordId")) if value})
         overflow = runtime._segment_overflow_count(logical)
-        publish_candidate(staged, config["outputPath"])
+        publish_candidate(staged, output)
+        from task_recovery import publish_binding
+        publish_binding(job, output)
         write_report(job / "artifacts" / "replace-final.json", {"status": "passed", "outputMode": "replace",
-            "candidateSha256": native["candidateSha256"], "requiresVisualReview": True,
+            "candidateSha256": native["candidateSha256"], "candidatePath": str(output), "requiresVisualReview": True,
             "layoutReviewRequired": bool(layout.get("manualReview") or overflow),
             "layoutReviewRecordIds": review_ids, "segmentOverflowCount": overflow,
             "sourceSha256": config["sourceSha256"]})
@@ -107,10 +113,13 @@ class ReplacePipeline:
         report = read_report(path) if path.is_file() else {}
         if report.get("status") != "passed" or report.get("outputMode") != self.mode: errors.append("replace_final_missing_or_failed")
         config = read_report(job / "config" / "export-job.json")
-        candidate = Path(config["outputPath"])
+        candidate = Path(report.get("candidatePath", config["outputPath"]))
         if not candidate.is_file() or digest(candidate) != report.get("candidateSha256"): errors.append("replace_candidate_missing_or_changed")
         review_path = job / "artifacts" / "replace-visual-review.json"
         review = read_report(review_path) if review_path.is_file() else {}
+        if (review.get("candidateSha256") != report.get("candidateSha256")
+                or review.get("sourceSha256") != config["sourceSha256"]):
+            review = {}
         warnings = review.get("warnings", [])
         warnings_valid = isinstance(warnings, list) and all(isinstance(w, str) and w.strip() for w in warnings)
         # One final visual decision covers both fitting and readability; layout IDs

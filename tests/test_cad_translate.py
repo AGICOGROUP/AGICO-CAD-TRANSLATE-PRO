@@ -935,7 +935,7 @@ class CadTranslateDryTests(unittest.TestCase):
             config = cad_translate.prepare_export_job(source, job, "zh-CN", "en")
             manifest = Path(config["manifestPath"])
             manifest.write_text(
-                json.dumps({"recordId": "a", "inputHash": "h", "plainText": "source", "protectedTokens": []}) + "\n",
+                json.dumps({"recordId": "a", "inputHash": "h", "plainText": "source", "rawText": "source", "protectedTokens": []}) + "\n",
                 encoding="utf-8",
             )
             Path(config["resultPath"]).write_text(json.dumps({"status": "succeeded"}), encoding="utf-8")
