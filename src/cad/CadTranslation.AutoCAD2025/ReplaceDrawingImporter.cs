@@ -25,7 +25,11 @@ internal static class ReplaceDrawingImporter
         TranslationRecord[] translations = ReadJsonLines<TranslationRecord>(context.Config.TranslationPath, "translation");
         BatchValidationResult validation = TranslationValidator.ValidateBatch(manifest, translations);
         if (!validation.IsValid)
-            throw new CommandProtocolException("invalid_translation_batch", string.Join("; ", validation.Errors.Select(error => error.Code)));
+        {
+            var failure = new CommandProtocolException("invalid_translation_batch", string.Join("; ", validation.Errors.Select(error => error.Code).Distinct()));
+            failure.Data["validationErrors"] = validation.Errors.ToArray();
+            throw failure;
+        }
 
         string temporaryOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);
         string auditOutput = CreateSiblingTemporaryPath(context.Config.OutputPath);

@@ -34,7 +34,7 @@ internal static class NativeDrawing
         else db.SaveAs(path, true, db.OriginalFileVersion, db.SecurityParameters);
     }
 
-    internal static void ExportCandidate(JobContext context)
+    internal static void ExportCandidate(JobContext context, Action<Database>? inspectOpened = null)
     {
         string output = context.Config.OutputPath;
         using var db = Open(output);
@@ -47,6 +47,7 @@ internal static class NativeDrawing
                 SourcePath = output, WorkingPath = output, SourceSha256 = hash,
                 ManifestPath = Path.Combine(context.Config.ArtifactDirectory, context.Config.OutputMode + "-candidate.jsonl") });
             DrawingExporter.Write(derived, db);
+            inspectOpened?.Invoke(db);
         }
         finally { HostApplicationServices.WorkingDatabase = previous; }
     }

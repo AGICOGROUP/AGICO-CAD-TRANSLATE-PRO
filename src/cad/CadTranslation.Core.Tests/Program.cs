@@ -3,6 +3,15 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("bilingual_grid_recovery_keeps_parameter_rows_together", () => {
+        var segments=Enumerable.Range(0,13).Select(i=>new Segment2(new Point2(0,i*5),new Point2(100,i*5))).ToList();
+        segments.Add(new(new Point2(0,0),new Point2(0,60)));
+        segments.Add(new(new Point2(100,0),new Point2(100,60)));
+        var cells=new[]{new LayoutRegion("one",LayoutRegionKind.TableCell,new Rect2(0,0,100,5)),new LayoutRegion("four",LayoutRegionKind.TableCell,new Rect2(0,15,100,20))};
+        var groups=BilingualTableLayout.CompleteGroups(cells,segments);
+        AssertEx.Equal(1,groups.Count); AssertEx.Equal(12,groups[0].Length);
+        AssertEx.Equal(0,BilingualTableLayout.CompleteGroups([],segments.Take(13).ToArray()).Count);
+    }),
     ("bilingual_local_search_finds_obstacle_edge_gap_missed_by_fixed_anchors", () => {
         var allowed = new Rect2(0, 0, 100, 50);
         var source = new Rect2(40, 20, 60, 30);
@@ -867,6 +876,16 @@ internal static class Tests
     {
         const string placement = "definition=25B06|position=1,2,0|rotation=0|scale=1,1,1|normal=0,0,1";
 
+        AssertEx.Equal("<anonymous-entity>",
+            NonTextStructureSignaturePolicy.StableEntityIdentity("1392", "ROOT/BLOCK/<anonymous-block>/138D"));
+        AssertEx.Equal("<anonymous-entity>",
+            NonTextStructureSignaturePolicy.StableEntityIdentity("1392", "ROOT/BLOCK/<anonymous-block>"));
+        AssertEx.Equal("1392",
+            NonTextStructureSignaturePolicy.StableEntityIdentity("1392", "ROOT/BLOCK/NAMED/138D"));
+        AssertEx.Equal("ROOT/BLOCK/<anonymous-block>",
+            NonTextStructureSignaturePolicy.StableOwnerPath("ROOT/BLOCK/*X1375/139EB"));
+        AssertEx.Equal("ROOT/BLOCK/NAMED/138D",
+            NonTextStructureSignaturePolicy.StableOwnerPath("ROOT/BLOCK/NAMED/138D"));
         AssertEx.Equal(
             NonTextStructureSignaturePolicy.GeometryToken(
                 "AcDbBlockReference",

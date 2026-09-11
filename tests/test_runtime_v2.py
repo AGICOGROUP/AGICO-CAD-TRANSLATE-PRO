@@ -92,8 +92,15 @@ class RuntimeV2Tests(unittest.TestCase):
                     return 0
                 with mock.patch.object(cad_translate,"require_ready"), mock.patch.object(cad_translate,"run_once",side_effect=run):
                     self.assertEqual(0,cad_translate.run_import(job,translations,root))
+                if mode == "bilingual":
+                    write_report(job / "artifacts/bilingual-layout-audit.json", {
+                        "reviewRecordIds": ["a"], "riskCounts": {"medium": 1, "high": 0},
+                        "risks": [{"code": "saved-text-overlap", "recordId": "a"}], "manualReview": []})
                 review=self.visual_review(job,config,"passed_with_warnings")
                 summary=cad_translate.summarize_audit(job)
+                if mode == "bilingual":
+                    self.assertEqual(["a"], summary["layoutReviewRecordIds"])
+                    self.assertEqual(1, summary["layoutRiskCounts"]["medium"])
                 self.assertTrue(summary["deliveryReady"])
                 self.assertEqual("ready_with_warnings",summary["deliveryStatus"])
                 self.assertEqual(review["warnings"],summary["warnings"])

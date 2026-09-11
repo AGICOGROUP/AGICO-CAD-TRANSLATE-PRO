@@ -249,7 +249,7 @@ internal static class DrawingVerifier
         {
             if (item.Value is not Entity entity) continue;
             if (verifiedAdditions?.Contains(entity.Handle.ToString()) == true) continue;
-            string stableOwnerPath = StableOwnerPath(item.OwnerPath);
+            string stableOwnerPath = NonTextStructureSignaturePolicy.StableOwnerPath(item.OwnerPath);
             TextStructureSignature? textSignature = TextSignature(entity, stableOwnerPath);
             if (textSignature is not null)
             {
@@ -259,7 +259,7 @@ internal static class DrawingVerifier
             string stablePlacement = entity is BlockReference reference
                 ? BlockReferencePlacement(reference)
                 : string.Empty;
-            rows.Add(string.Join("|", "entity", entity.Handle, entity.GetRXClass().Name, stableOwnerPath, entity.Layer,
+            rows.Add(string.Join("|", "entity", NonTextStructureSignaturePolicy.StableEntityIdentity(entity.Handle.ToString(), stableOwnerPath), entity.GetRXClass().Name, stableOwnerPath, entity.Layer,
                 entity.ColorIndex.ToString(CultureInfo.InvariantCulture), entity.LineWeight.ToString(),
                 NonTextStructureSignaturePolicy.GeometryToken(
                     entity.GetRXClass().Name,
@@ -318,9 +318,6 @@ internal static class DrawingVerifier
     // Legacy DWG SaveAs may change only the last binary floating-point digits.
     // Nanounit quantization rejects real geometry edits while ignoring serialization noise.
     private static string Number(double value) => Math.Round(value, 9).ToString("R", CultureInfo.InvariantCulture);
-    private static string StableOwnerPath(string value) => Regex.Replace(
-        value, @"/\*[A-Z][0-9A-F]+/", "/<anonymous-block>/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
     private static string Extents(Entity entity)
     {
         try

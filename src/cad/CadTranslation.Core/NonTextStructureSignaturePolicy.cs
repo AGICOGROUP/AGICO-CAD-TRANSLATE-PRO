@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace CadTranslation.Core;
 
@@ -9,6 +10,27 @@ namespace CadTranslation.Core;
 /// </summary>
 public static class NonTextStructureSignaturePolicy
 {
+    public static string StableOwnerPath(string ownerPath)
+    {
+        ArgumentNullException.ThrowIfNull(ownerPath);
+        return Regex.Replace(ownerPath,
+            @"/\*[A-Z][0-9A-F]+/[0-9A-F]+(?=/|$)",
+            "/<anonymous-block>",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    public static string StableEntityIdentity(string handle, string ownerPath)
+    {
+        ArgumentNullException.ThrowIfNull(handle);
+        ArgumentNullException.ThrowIfNull(ownerPath);
+        // Legacy SaveAs may renumber entities inside anonymous (*X/*D/etc.)
+        // definitions. Their type, owner, properties and geometry remain the
+        // structural identity; the transient handle does not.
+        return ownerPath.Contains("/<anonymous-block>", StringComparison.Ordinal)
+            ? "<anonymous-entity>"
+            : handle;
+    }
+
     public static string GeometryToken(string objectType, string stablePlacement, string geometricExtents)
     {
         ArgumentNullException.ThrowIfNull(objectType);

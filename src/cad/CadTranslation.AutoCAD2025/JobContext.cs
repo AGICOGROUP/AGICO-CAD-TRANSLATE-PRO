@@ -99,7 +99,7 @@ internal sealed partial class JobContext
                         operation, stage = exception.Data["stage"], block = exception.Data["block"],
                         recordId = exception.Data["recordId"], handle = exception.Data["handle"],
                         parentHandle = exception.Data["parentHandle"], objectType = exception.Data["objectType"],
-                        error = ToError(exception), exception = exception.ToString(),
+                        error = ToError(exception), errors = ToErrors(exception), exception = exception.ToString(),
                         assemblyPath = assembly.Location, moduleId = assembly.ManifestModule.ModuleVersionId,
                         assemblySha256 = Hashing.Sha256File(assembly.Location)
                     });
@@ -165,7 +165,11 @@ internal sealed partial class JobContext
 
     private static CommandResult Failed(JobConfig config, string operation, Exception exception) =>
         new(SchemaVersion, config.JobId, operation, "failed", config.SourceSha256, 0, Array.Empty<string>(),
-            new[] { ToError(exception) }, DateTimeOffset.UtcNow);
+            ToErrors(exception), DateTimeOffset.UtcNow);
+
+    private static IReadOnlyList<CommandError> ToErrors(Exception exception) =>
+        exception.Data["validationErrors"] is IReadOnlyList<CommandError> { Count: > 0 } errors
+            ? errors : new[] { ToError(exception) };
 
     private static CommandError ToError(Exception exception) => exception is CommandProtocolException protocol
         ? new CommandError(protocol.Code, protocol.Message, exception.Data["recordId"] as string, exception.Data["handle"] as string)

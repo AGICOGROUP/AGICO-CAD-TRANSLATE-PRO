@@ -103,9 +103,12 @@ class BilingualPipeline:
             errors.append("bilingual_visual_blocking_issues")
         ready = not errors and visual_passed
         blocked = bool(errors or review.get("status") == "failed" or review.get("blockingIssues"))
+        layout_path = job / "artifacts" / "bilingual-layout-audit.json"
+        layout = read_report(layout_path) if layout_path.is_file() else {}
         return {"outputMode": self.mode, "status": "failed" if blocked else "passed",
             "gate": {"passed": not errors, "errorCodes": errors}, "requiresVisualReview": not visual_passed,
             "deliveryReady": ready, "candidate": str(candidate),
             "deliveryStatus": "ready_with_warnings" if ready and warnings else "ready" if ready else "blocked" if blocked else "needs_review",
             "warnings": warnings if ready else [], "blockingIssues": review.get("blockingIssues", []),
+            "layoutReviewRecordIds": layout.get("reviewRecordIds", []), "layoutRiskCounts": layout.get("riskCounts", {}),
             "addedCount": report.get("addedCount", 0), "skippedExistingCount": report.get("skippedExistingCount", 0)}

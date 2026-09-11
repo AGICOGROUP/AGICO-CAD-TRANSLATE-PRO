@@ -44,7 +44,7 @@ internal static class BilingualTableCopy
             // Definitions instantiated multiple times need instance-specific placement, not one shared copy.
             if (!definition.Name.StartsWith("*Model_Space", StringComparison.OrdinalIgnoreCase) &&
                 !definition.Name.StartsWith("*Paper_Space", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var group in BilingualTableLayout.Groups(definition.Regions))
+            foreach (var group in BilingualTableLayout.CompleteGroups(definition.Regions,definition.BoundarySegments))
             {
                 // Select the repeated body-row height. This excludes adjacent company/signature frames.
                 var band = group.GroupBy(c => Math.Round(c.Height, 3)).OrderByDescending(g => g.Count()).First();
@@ -61,10 +61,11 @@ internal static class BilingualTableCopy
                 { decisions.Add(new { table, strategy="cell-local", reason="existing-bilingual-content-reuse" }); continue; }
                 string sourceText = string.Join(" ", sources.Select(t => BilingualDrawingImporter.Plain(inputs.First(i => i.Manifest.RecordId == t.RecordId).Manifest.RawText)));
                 // Independent schedules have explicit column headings; title blocks do not qualify.
-                if (!System.Text.RegularExpressions.Regex.IsMatch(sourceText, "名称|规格|数量|材质|Name|Specification|Quantity|Material|Cantidad|Descripción", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
+                if (!System.Text.RegularExpressions.Regex.IsMatch(sourceText, "名称|规格|数量|材质|技术性能|技术参数|Name|Specification|Quantity|Material|Technical|Capacity|Cantidad|Descripción", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
                 bool multiColumn = requests.GroupBy(t => cells.Where(c => c.Contains(t.Source.Bounds)).Select(c => Math.Round(c.Center.Y, 3)).FirstOrDefault())
                     .Any(g => g.Count() > 1);
-                if (!multiColumn) continue;
+                // Number + description/value is also a table, even when only one cell per row needs translation.
+                if (!multiColumn && requests.Length < 3) continue;
                 var owner = access.Read<BlockTableRecord>(db.GetObjectId(false, new Handle(Convert.ToInt64(definition.Handle, 16)), 0), "table-owner", definition.Name);
                 if (owner is null) { decisions.Add(new { table, strategy="cell-local", reason="unreadable-table-owner" }); continue; }
                 var members = new List<Entity>();

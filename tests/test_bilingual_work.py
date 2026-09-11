@@ -111,6 +111,40 @@ class BilingualWorkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'No native review window'):
             review_regions(windows, 'CD')
 
+    def test_review_accepts_native_uppercase_model_space_not_paper_or_prefix(self):
+        window = dict(sourceHandle='AB', instancePath='*MODEL_SPACE/Block[1]',
+                      bounds=dict(left=0, bottom=0, right=10, top=10))
+        self.assertEqual([0, 0, 10, 10], review_regions([window], 'AB')[0]['window'])
+        for path in ('*PAPER_SPACE/Block[1]', '*Model_SpaceFake/Block[1]'):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'Paper-space'):
+                review_regions([dict(window, instancePath=path)], 'AB')
+
+    def test_batch_review_starts_cad_once_per_drawing_and_keeps_all_images(self):
+        import re
+        from unittest.mock import patch
+        from render_review import render_job
+        starts = []
+        class RenderProcess:
+            def __init__(self, command, **kwargs):
+                starts.append(command)
+                script = Path(command[command.index('/s') + 1]).read_text(encoding='utf-8')
+                for name in re.findall(r'_.PNGOUT\n"([^"]+)"', script):
+                    Path(name).write_bytes(b'png-fixture' * 100)
+            def poll(self): return 0
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            (job/'config').mkdir(); (job/'artifacts').mkdir()
+            for name in ('source.dwg', 'candidate.dwg'): (job/name).write_bytes(b'fixture')
+            (job/'config/export-job.json').write_text(json.dumps(dict(sourcePath=str(job/'source.dwg'), outputPath=str(job/'candidate.dwg'))))
+            windows = [dict(sourceHandle='AB', instancePath=f'*Model_Space/Block[{i}]',
+                bounds=dict(left=i*100, bottom=0, right=i*100+10, top=10)) for i in range(2)]
+            (job/'artifacts/bilingual-review-windows.json').write_text(json.dumps(dict(windows=windows)))
+            with patch('render_review.subprocess.Popen', RenderProcess), patch('render_review.discover_autocad', return_value=job):
+                plan = json.loads(render_job(job,'AB').read_text(encoding='utf-8'))
+            self.assertEqual(3, len(plan))
+            self.assertTrue(all((job/'artifacts'/name).is_file() for item in plan for name in item['images']))
+            self.assertEqual(2, len(starts), 'one CAD session per source/candidate, not one per window')
+
 
 if __name__ == '__main__':
     unittest.main()

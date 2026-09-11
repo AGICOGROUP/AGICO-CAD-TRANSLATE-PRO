@@ -190,6 +190,9 @@ def prepare_translation_worklist(job: Path, max_source_chars: int = 6000, existi
          "contextVariants": list({json.dumps(layout_hint(row), sort_keys=True): layout_hint(row) for row in rows}.values())[:4]}
         for rows in grouped
     ]
+    for item in work_records:
+        if item["contextVariants"] == [item["context"]]:
+            del item["contextVariants"]
     requested_count = sum(len(rows) for rows in grouped)
     batches: list[list[dict[str, object]]] = []
     current: list[dict[str, object]] = []
@@ -698,13 +701,14 @@ def run_export(
     autocad_root: Path,
     timeout_seconds: int | None = None,
     output_mode: str = "replace",
+    retry_from: Path | None = None,
 ) -> int:
     started = time.time()
     source = absolute(source)
     assert_source(source)
     require_ready(source, autocad_root)
     config = prepare_export_job(source, job, source_language, target_language, output_mode)
-    record_timing(absolute(job), "export-start", started)
+    record_timing(absolute(job), "export-start", started, retry_from=retry_from)
     result = _run_stage(
         "export",
         absolute(job) / "config" / "export-job.json",
@@ -785,6 +789,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--autocad-root", type=Path, default=discover_autocad()); sub = parser.add_subparsers(dest="command", required=True)
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
     export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="replace")
+    export.add_argument("--retry-from", type=Path, help="Previous attempt of this same task; carry its full wall-clock timing, not its CAD result")
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
     prepared.add_argument("--existing-inline-handles", help="Comma-separated current handles reviewed as complete inline bilingual pairs")
     assembled = sub.add_parser("assemble-translations"); assembled.add_argument("--job", type=Path, required=True); assembled.add_argument("--translated", type=Path, required=True)
@@ -793,7 +798,7 @@ def main(argv: list[str] | None = None) -> int:
     audited = sub.add_parser("audit-summary"); audited.add_argument("--job", type=Path, required=True)
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
-    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode); output = {"job": str(absolute(args.job)), "exitCode": code}
+    elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode, args.retry_from); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars, args.existing_inline_handles), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0
     elif args.command == "import": code = run_import(args.job, args.translations, args.autocad_root, args.timeout_seconds); output = {"job": str(absolute(args.job)), "exitCode": code}

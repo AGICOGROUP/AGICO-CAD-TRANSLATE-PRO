@@ -6,12 +6,176 @@ using CadTranslation.AutoCAD2025;
 
 public class ContactTests
 {
+    [CommandMethod("CAD_BILINGUAL_GROUP_TEST")]
+    public void GroupDrawing()
+    {
+        string job=Environment.GetEnvironmentVariable("CAD_GROUP_SOURCE_JOB")!;
+        string output=Environment.GetEnvironmentVariable("CAD_GROUP_TEST_OUTPUT")!;
+        string report=Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!;
+        try
+        {
+            var rows=NativeDrawing.ReadRows<CadTranslation.Contracts.ManifestRecord>(Path.Combine(job,"exchange/manifest.input.jsonl"));
+            var translations=NativeDrawing.ReadRows<CadTranslation.Contracts.TranslationRecord>(Path.Combine(job,"exchange/translations.output.jsonl")).ToDictionary(t=>t.RecordId);
+            using var sourceDb=NativeDrawing.Open(Path.Combine(job,"working/source.dwg"));
+            using var db=new Database(true,true);
+            var mapping=new IdMapping();
+            using(var read=sourceDb.TransactionManager.StartTransaction())
+            using(var write=db.TransactionManager.StartTransaction())
+            {
+                var sourceBlocks=(BlockTable)read.GetObject(sourceDb.BlockTableId,OpenMode.ForRead);
+                var model=(BlockTableRecord)read.GetObject(sourceBlocks[BlockTableRecord.ModelSpace],OpenMode.ForRead);
+                Rect2[] windows=[new(26000,-40500,43000,-28000),new(44000,-74000,66000,-56000),new(13500,-99000,35500,-82000)];
+                var ids=new ObjectIdCollection();
+                var blockInfo=new List<object>();
+                foreach(ObjectId id in model)
+                {
+                    var entity=(Entity)read.GetObject(id,OpenMode.ForRead);
+                    try{var b=entity.GeometricExtents;var box=new Rect2(b.MinPoint.X,b.MinPoint.Y,b.MaxPoint.X,b.MaxPoint.Y);
+                        if(entity is BlockReference br) blockInfo.Add(new{handle=br.Handle.ToString(),br.Name,bounds=box});
+                        if(windows.Any(w=>BilingualDrawingImporter.Intersects(w,box,0))) ids.Add(id);}
+                    catch(Autodesk.AutoCAD.Runtime.Exception ex){if(entity is BlockReference br){blockInfo.Add(new{handle=br.Handle.ToString(),br.Name,error=ex.Message});ids.Add(id);}}
+                }
+                File.WriteAllText(report+".blocks",System.Text.Json.JsonSerializer.Serialize(blockInfo,CadTranslation.Contracts.JsonDefaults.Options));
+                var blocks=(BlockTable)write.GetObject(db.BlockTableId,OpenMode.ForRead);
+                sourceDb.WblockCloneObjects(ids,blocks[BlockTableRecord.ModelSpace],mapping,DuplicateRecordCloning.Ignore,false);
+                write.Commit();
+            }
+            var mapped=mapping.Cast<IdPair>().Where(p=>p.IsCloned).ToDictionary(p=>p.Key,p=>p.Value);
+            var previous=HostApplicationServices.WorkingDatabase;
+            try
+            {
+                HostApplicationServices.WorkingDatabase=db;
+                using var tx=db.TransactionManager.StartTransaction();
+                var access=new CadObjectAccess(db,tx);
+                var inputs=rows.Where(r=>mapped.ContainsKey(sourceDb.GetObjectId(false,new Handle(Convert.ToInt64(r.Handle,16)),0)))
+                    .Select(r=>new LayoutWriteInput(mapped[sourceDb.GetObjectId(false,new Handle(Convert.ToInt64(r.Handle,16)),0)],r,
+                    TranslationValidator.RestoreProtectedTokensForOutput(translations[r.RecordId].TranslatedText,r.ProtectedTokens),false)).ToArray();
+                File.WriteAllText(report+".stage","capture-topology");
+                var baseline=DrawingTopologyCapture.Capture(db,tx,inputs,access);
+                File.WriteAllText(report+".grid",System.Text.Json.JsonSerializer.Serialize(baseline.Definitions.Where(d=>d.Name=="*Model_Space").SelectMany(d=>d.BoundarySegments)
+                    .Where(s=>s.MinX>18000 && s.MaxX<30000 && s.MinY> -93000 && s.MaxY< -85000),CadTranslation.Contracts.JsonDefaults.Options));
+                var occupied=baseline.Definitions.ToDictionary(d=>d.Name,d=>d.Texts.Select(t=>t.Source.Bounds).ToList());
+                foreach(var d in baseline.Definitions)
+                foreach(var t in d.Texts)
+                foreach(var name in occupied.Keys.Where(n=>n!=d.Name)) occupied[name].AddRange(InstanceOccupancyProjection.Project(t.Source.Bounds,d.Name,name,baseline.BlockInstances));
+                var decisions=new List<object>();
+                File.WriteAllText(report+".stage","group-plan");
+                var slots=BilingualGroupLayout.Plan(db,baseline,inputs,occupied,"en",access,decisions);
+                File.WriteAllText(report+".stage","save-groups");
+                File.WriteAllText(report+".plan",System.Text.Json.JsonSerializer.Serialize(decisions,CadTranslation.Contracts.JsonDefaults.Options));
+                var noteHandles=new[]{"A414","A415","A418","A430"};
+                var noteRows=inputs.Where(i=>noteHandles.Contains(i.Manifest.Handle)).ToArray();
+                Assert(noteRows.Length==4 && noteRows.All(i=>slots.ContainsKey(i.Manifest.RecordId)),"force definitions must be planned as a complete reading group");
+                var noteSlots=noteRows.Select(i=>slots[i.Manifest.RecordId]).ToArray();
+                Assert(noteSlots.All(s=>s.Strategy=="note-block") && noteSlots.Select(s=>s.Bounds.Left).Distinct().Count()==1 && noteSlots.Select(s=>s.Height).Distinct().Count()==1,"note alignment and height must be shared");
+                var parameterSlots=slots.Values.Where(s=>s.Strategy=="table-aligned-block" && s.Bounds.Left>18000 && s.Bounds.Right<28000 && s.Bounds.Top< -91000 && s.Bounds.Bottom> -98000 && System.Text.RegularExpressions.Regex.IsMatch(s.DisplayText,@"^\d+\. ")).OrderByDescending(s=>s.Bounds.Top).ToArray();
+                Assert(parameterSlots.Length==12 && parameterSlots.Select(s=>s.Bounds.Left).Distinct().Count()==1,"all twelve parameter rows must fit beneath the original table inside its frame");
+                for(int i=0;i<12;i++)
+                {
+                    Assert(parameterSlots[i].DisplayText.StartsWith((i+1)+". "),"table row index association must survive grouping");
+                    if(i>0) Assert(parameterSlots[i-1].Bounds.Bottom>parameterSlots[i].Bounds.Top,"group rows must not overlap");
+                }
+                var records=new List<object>();
+                foreach(var input in inputs.Where(i=>slots.ContainsKey(i.Manifest.RecordId)))
+                {
+                    var slot=slots[input.Manifest.RecordId];
+                    var original=(Entity)tx.GetObject(input.ObjectId,OpenMode.ForRead);
+                    var owner=(BlockTableRecord)tx.GetObject(original.OwnerId,OpenMode.ForWrite);
+                    var added=new MText(); added.SetDatabaseDefaults(db); added.Attachment=AttachmentPoint.TopLeft;
+                    added.LayerId=original.LayerId; added.Color=original.Color;
+                    added.Contents=BilingualGroupLayout.Contents(slot.DisplayText,"en");
+                    added.TextHeight=slot.Height; added.Width=slot.WrapWidth;
+                    var footprint=BilingualPlacementChecks.Footprint(added);
+                    BilingualPlacementChecks.Move(added,footprint,slot.Bounds.Left,slot.Bounds.Top,0);
+                    Assert(slot.Bounds.Contains(new Rect2(slot.Bounds.Left,slot.Bounds.Top-footprint.Height,slot.Bounds.Left+footprint.Width,slot.Bounds.Top),.001),"group measurement changed");
+                    owner.AppendEntity(added); tx.AddNewlyCreatedDBObject(added,true);
+                    records.Add(new{input.Manifest.Handle,target=added.Handle.ToString(),slot.Strategy,slot.Bounds,slot.Height});
+                }
+                tx.Commit(); NativeDrawing.Save(db,output);
+                if(Environment.GetEnvironmentVariable("CAD_GROUP_PATCH_CANDIDATE") is {Length:>0} existingCandidate)
+                {
+                    Assert(!Path.GetFullPath(existingCandidate).Equals(Path.GetFullPath(output),StringComparison.OrdinalIgnoreCase),"local correction requires a separate output");
+                    using var pairJson=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"artifacts/bilingual-pairs.json")));
+                    var oldPairs=pairJson.RootElement.GetProperty("pairs").EnumerateArray().ToDictionary(p=>p.GetProperty("recordId").GetString()!);
+                    using var full=NativeDrawing.Open(existingCandidate);
+                    HostApplicationServices.WorkingDatabase=full;
+                    var expectedTargets=new Dictionary<string,string>();
+                    using(var edit=full.TransactionManager.StartTransaction())
+                    {
+                        string[] forces=["A414","A415","A418","A430","6B4C","6B4D","6B50","6B68"];
+                        var originalHandles=rows.Select(r=>r.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        foreach(var input in inputs.Where(i=>slots.ContainsKey(i.Manifest.RecordId)))
+                        {
+                            var point=input.Manifest.Geometry.InsertionPoint;
+                            if(!forces.Contains(input.Manifest.Handle) && !(point.X>18000 && point.X<26000 && point.Y> -92000 && point.Y< -85000)) continue;
+                            var old=oldPairs[input.Manifest.RecordId];
+                            string handle=old.GetProperty("targetHandle").GetString()!;
+                            Assert(old.GetProperty("decision").GetString()=="added" && !originalHandles.Contains(handle),"only generated bilingual targets may be corrected");
+                            var target=(MText)edit.GetObject(full.GetObjectId(false,new Handle(Convert.ToInt64(handle,16)),0),OpenMode.ForWrite);
+                            Assert(target.Text==old.GetProperty("targetText").GetString(),"candidate target content must match the selected task");
+                            var slot=slots[input.Manifest.RecordId];
+                            target.TextStyleId=full.Textstyle;target.Attachment=AttachmentPoint.TopLeft;target.Rotation=0;target.Normal=Vector3d.ZAxis;
+                            target.Contents=BilingualGroupLayout.Contents(slot.DisplayText,"en");target.TextHeight=slot.Height;target.Width=slot.WrapWidth;
+                            var footprint=BilingualPlacementChecks.Footprint(target);
+                            BilingualPlacementChecks.Move(target,footprint,slot.Bounds.Left,slot.Bounds.Top,point.Z);
+                            expectedTargets[handle]=slot.DisplayText;
+                        }
+                        edit.Commit();NativeDrawing.Save(full,output);
+                    }
+                    using var reopened=NativeDrawing.Open(output);
+                    using var verify=reopened.TransactionManager.StartTransaction();
+                    foreach(var item in expectedTargets)
+                    {
+                        var target=(MText)verify.GetObject(reopened.GetObjectId(false,new Handle(Convert.ToInt64(item.Key,16)),0),OpenMode.ForRead);
+                        Assert(target.Text==item.Value,"saved grouped target lost content");
+                    }
+                    foreach(var row in rows.Where(r=>r.ObjectType is "AcDbText" or "AcDbMText"))
+                    {
+                        var entity=(Entity)verify.GetObject(reopened.GetObjectId(false,new Handle(Convert.ToInt64(row.Handle,16)),0),OpenMode.ForRead);
+                        string raw=entity is MText m?m.Contents:((DBText)entity).TextString;
+                        Assert(raw==row.RawText,"local correction changed an original text");
+                    }
+                    File.WriteAllText(report+".correction",System.Text.Json.JsonSerializer.Serialize(new{updatedTargets=expectedTargets.Count,sourceTextPreserved=true,scope="two force-note instances and the 12-row parameter table with heading; full structural gate remains pending"}));
+                }
+                File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new{status="generated",decisions,records},CadTranslation.Contracts.JsonDefaults.Options));
+            }
+            finally{HostApplicationServices.WorkingDatabase=previous;}
+        }
+        catch(System.Exception ex){File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new{status="failed",error=ex.ToString()}));}
+    }
+
+    [CommandMethod("CAD_BILINGUAL_REVIEW_TEST")]
+    public void ReviewExisting()
+    {
+        string job=Environment.GetEnvironmentVariable("CAD_LAYOUT_REVIEW_JOB")!;
+        using var config=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"config/export-job.json")));
+        using var report=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"artifacts/bilingual-pairs.json")));
+        var pairs=System.Text.Json.JsonSerializer.Deserialize<BilingualDrawingImporter.Pair[]>(report.RootElement.GetProperty("pairs").GetRawText(),CadTranslation.Contracts.JsonDefaults.Options)!;
+        // Rect2's constructor uses x1/y1/x2/y2, not serialized left/bottom/right/top.
+        pairs=pairs.Select((p,i)=> {
+            var b=report.RootElement.GetProperty("pairs")[i].GetProperty("bounds");
+            return p with {Bounds=new Rect2(b.GetProperty("left").GetDouble(),b.GetProperty("bottom").GetDouble(),b.GetProperty("right").GetDouble(),b.GetProperty("top").GetDouble())};
+        }).ToArray();
+        var rows=NativeDrawing.ReadRows<CadTranslation.Contracts.ManifestRecord>(Path.Combine(job,"artifacts/bilingual-candidate.jsonl"));
+        using var db=NativeDrawing.Open(config.RootElement.GetProperty("outputPath").GetString()!);
+        var previous=HostApplicationServices.WorkingDatabase;
+        try
+        {
+            HostApplicationServices.WorkingDatabase=db;
+            var risks=BilingualSavedLayoutReview.MeasureAndInspect(db,pairs,rows,new Dictionary<string,Rect2>(),new List<CadObjectAccess.Issue>());
+            File.WriteAllText(Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!,System.Text.Json.JsonSerializer.Serialize(new {risks,
+                scope="Regression-only replay of saved text bounds; does not recheck original placement regions or approve delivery"},CadTranslation.Contracts.JsonDefaults.Options));
+        }
+        finally { HostApplicationServices.WorkingDatabase=previous; }
+    }
+
     [CommandMethod("CAD_CONTACT_TEST")]
     public void Run()
     {
         var report = Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!;
         try
         {
+            SavedBilingualReview();
             using var circle = new Circle(Point3d.Origin, Vector3d.ZAxis, 10);
             Assert(NativeGeometryContact.Intersects(circle, new Rect2(-1,-1,1,1)) == false, "circle empty center is not a stroke");
             Assert(NativeGeometryContact.Intersects(circle, new Rect2(9,-1,11,1)) == true, "circle crossing must be detected");
@@ -27,15 +191,104 @@ public class ContactTests
             LocalCorrection(true);
             ObjectAccess();
             BilingualLocalSearch();
+            BatchDiagnostic();
+            ReadableNearby();
+            EmergencyCannotCrossBoundaries();
+            RotatedLocalSearch();
             using var wide = new Polyline();
             wide.AddVertexAt(0,new Point2d(0,0),0,4,4);
             wide.AddVertexAt(1,new Point2d(10,10),0,4,4);
             Assert(NativeGeometryContact.Intersects(wide,new Rect2(0,1,1,2)) is null,"wide polyline cannot be cleared by center-line testing");
-            File.WriteAllText(report, "{\"status\":\"passed\",\"cases\":21}");
+            File.WriteAllText(report, "{\"status\":\"passed\",\"cases\":27}");
         }
         catch (System.Exception ex) { File.WriteAllText(report, System.Text.Json.JsonSerializer.Serialize(new {status="failed", error=ex.ToString()})); }
     }
     private static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+
+    private static void SavedBilingualReview()
+    {
+        CadTranslation.Contracts.ManifestRecord Row(string id,string handle,Rect2 box) => new("1.0",id,"hash","model",handle,"AcDbMText","Contents","text","Pump","Pump","Pump",[],
+            new(new(0,0,0),null,0,new(new(box.Left,box.Bottom,0),new(box.Right,box.Top,0))),new("0","Standard",2,1,"","",new Dictionary<string,string>()),"input");
+        var target=new Rect2(5,0,10,2);
+        var pair=new BilingualDrawingImporter.Pair("a","AA","BB","Pump","added","model",target,.7);
+        var rows=new[]{Row("a","AA",new Rect2(0,0,3,2)),Row("new","BB",target),Row("other","CC",new Rect2(8,0,12,2))};
+        var risks=BilingualSavedLayoutReview.Inspect(new[]{pair,pair with {RecordId="follower",Decision="group-member"}},rows,
+            new Dictionary<string,Rect2>{{"a",new Rect2(4,-1,9,3)}});
+        Assert(risks.Any(r=>r.Code=="outside-placement-region" && r.TargetHandle=="BB") &&
+            risks.Count(r=>r.Code=="saved-text-overlap" && r.OtherHandle=="CC")==1,
+            "saved bilingual review must expose actual overflow and overlap, without double-counting term followers");
+    }
+
+    private static void RotatedLocalSearch()
+    {
+        using var text=new MText(); text.SetDatabaseDefaults(); text.Attachment=AttachmentPoint.TopLeft;
+        foreach (double angle in new[] {Math.PI/2, -Math.PI/2, Math.PI/4, Math.PI})
+        {
+        text.Rotation=angle;
+        var box=new Rect2(0,0,3,25);
+        var source=new CadLayoutText(ObjectId.Null,"rot","model","AB","AcDbMText","Gearbox Centerline",true,
+            new TextLayoutSnapshot("rot",box,box.Center,3),null);
+        var definition=new CadDefinitionTopology("model","1",Array.Empty<Segment2>(),Array.Empty<LayoutRegion>(),
+            new[]{source},Array.Empty<CadProtectedGeometry>());
+        var allowed=new Rect2(-10,-5,20,35);
+        var trace=new BilingualPlacementTrace();
+        bool placed=BilingualDrawingImporter.TryLocalWhitespace(text,"Gearbox Centerline",source,definition,allowed,new[]{box},0,out var result,out _,trace);
+        Assert(placed &&
+            allowed.Contains(Box(text)) && !BilingualDrawingImporter.Intersects(Box(text),box,.36) &&
+            result.Contains(Box(text),.01) && Math.Abs(Math.IEEERemainder(text.Rotation-angle,2*Math.PI))<1e-8,
+            $"rotated local search must use the rotated footprint without changing orientation: placed={placed}, result={result}, actual={Box(text)}, rotation={text.Rotation}, rejected={System.Text.Json.JsonSerializer.Serialize(trace.Counts)}");
+        }
+    }
+
+    private static void EmergencyCannotCrossBoundaries()
+    {
+        using var text=new MText(); text.SetDatabaseDefaults(); text.Attachment=AttachmentPoint.TopLeft;
+        var box=new Rect2(0,0,3,3); var cell=new LayoutRegion("cell",LayoutRegionKind.TableCell,new Rect2(-1,-1,10,5));
+        var source=new CadLayoutText(ObjectId.Null,"blocked","model","AB","AcDbText","Pump",true,
+            new TextLayoutSnapshot("blocked",box,box.Center,3),cell);
+        var lines=Enumerable.Range(0,61).Select(i=>new Segment2(new Point2(-1,-1+i*.1),new Point2(10,-1+i*.1))).ToArray();
+        var definition=new CadDefinitionTopology("model","1",lines,new[]{cell},new[]{source},Array.Empty<CadProtectedGeometry>());
+        var place=typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
+        var trace=new BilingualPlacementTrace();
+        object[] args={text,"Pump",source,definition,new List<Rect2>{box},0d,box,0d,trace};
+        Assert(!(bool)place.Invoke(null,args)!,"emergency placement must not bypass boundary checks after normal candidates failed");
+        Assert(trace.Counts.GetValueOrDefault("boundary-crossing")>0 && trace.Examples.Count<=18 && trace.Examples.Any(e=>e.Boundary is not null),
+            "failed placement must retain bounded rejection evidence rather than just a generic failure");
+    }
+
+    private static void ReadableNearby()
+    {
+        using var text = new MText(); text.SetDatabaseDefaults(); text.Attachment=AttachmentPoint.TopLeft;
+        var box=new Rect2(0,0,20,3);
+        var source=new CadLayoutText(ObjectId.Null,"a","model","1","AcDbText","Water Pump",true,
+            new TextLayoutSnapshot("a",box,box.Center,3),null);
+        var definition=new CadDefinitionTopology("model","1",Array.Empty<Segment2>(),Array.Empty<LayoutRegion>(),
+            new[]{source},Array.Empty<CadProtectedGeometry>());
+        var place=typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
+        object?[] args={text,"Water Pump",source,definition,new List<Rect2>{box},0d,box,0d,null};
+        Assert((bool)place.Invoke(null,args)! && text.TextHeight>=2.1 && text.Text=="Water Pump" &&
+            !BilingualDrawingImporter.Intersects((Rect2)args[6],box,.36),
+            "open nearby space must retain a larger complete translation without touching source text");
+    }
+
+    private static void BatchDiagnostic()
+    {
+        string dir=Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT"))!,"batch-diagnostic");
+        Directory.CreateDirectory(dir);
+        var config=new CadTranslation.Contracts.JobConfig("1.0","batch","import","","","hash","",null,"",
+            Path.Combine(dir,"result.json"),dir,"zh-CN","en","bilingual");
+        var context=(JobContext)Activator.CreateInstance(typeof(JobContext),System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic,
+            null,new object[]{config,dir},null)!;
+        var error=new CommandProtocolException("bilingual_invalid_batch","invalid batch");
+        error.Data["validationErrors"]=new[] {
+            new CadTranslation.Contracts.CommandError("invariant_mismatch","wrong number","r1","AB"),
+            new CadTranslation.Contracts.CommandError("invariant_mismatch","wrong unit","r2","CD")};
+        JobContext.TryWriteFailure("import",context,error);
+        using var report=System.Text.Json.JsonDocument.Parse(File.ReadAllText(config.ResultPath));
+        var errors=report.RootElement.GetProperty("errors");
+        Assert(errors.GetArrayLength()==2 && errors[0].GetProperty("recordId").GetString()=="r1" &&
+            errors[1].GetProperty("handle").GetString()=="CD", "batch failures must expose every failing record and handle without revalidating");
+    }
 
     private static void BilingualLocalSearch()
     {

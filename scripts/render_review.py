@@ -9,26 +9,42 @@ from pathlib import Path
 from cad_translate import discover_autocad, terminate_process_tree
 
 def render(drawing, output, window=None, timeout=60, paper=False):
-    drawing, output = drawing.resolve(), output.resolve()
+    return render_many(drawing, [(output, window)], timeout, paper)[0]
+
+
+def render_many(drawing, requests, timeout=60, paper=False):
+    """Render all requested windows in one disposable CAD session."""
+    drawing = drawing.resolve()
+    requests = [(output.resolve(), window) for output, window in requests]
     if not drawing.is_file(): raise FileNotFoundError(drawing)
-    if output.exists(): raise FileExistsError(output)
-    if any(c in str(output) for c in '\r\n"'): raise ValueError("Unsafe output path")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    if not requests: return []
+    outputs = [output for output, _ in requests]
+    if len(set(outputs)) != len(outputs): raise ValueError("Duplicate review output path")
+    for output, window in requests:
+        if output.exists(): raise FileExistsError(output)
+        if any(c in str(output) for c in '\r\n"'): raise ValueError("Unsafe output path")
+        if window is not None and (len(window) != 4 or not all(math.isfinite(v) for v in window)
+                or window[2] <= window[0] or window[3] <= window[1]):
+            raise ValueError("Invalid review window")
+        output.parent.mkdir(parents=True, exist_ok=True)
+    output = outputs[0]
     # Core Console's localized QUIT prompt can save on "N". Render only an owned
     # copy, and end the process after PNGOUT instead of sending a save response.
     render_input = output.with_name("." + output.stem + "-input" + drawing.suffix)
     if render_input.exists(): raise FileExistsError(render_input)
     shutil.copy2(drawing, render_input)
     script = output.with_suffix(".scr")
-    zoom = "_E\n" if window is None else f"_W\n{window[0]},{window[1]}\n{window[2]},{window[3]}\n"
     view = '' if paper else '_.UCS\n_W\n_.PLAN\n_W\n'
-    script.write_text(f'_.FILEDIA\n0\n_.CMDDIA\n0\n_.TILEMODE\n{0 if paper else 1}\n' + view + '_.QTEXTMODE\n0\n_.REGENALL\n_.ZOOM\n' + zoom +
-        '_.PNGOUT\n"' + output.as_posix() + '"\n_ALL\n\n', encoding="utf-8")
+    commands = f'_.FILEDIA\n0\n_.CMDDIA\n0\n_.TILEMODE\n{0 if paper else 1}\n' + view + '_.QTEXTMODE\n0\n_.REGENALL\n'
+    for target, window in requests:
+        zoom = "_E\n" if window is None else f"_W\n{window[0]},{window[1]}\n{window[2]},{window[3]}\n"
+        commands += '_.ZOOM\n' + zoom + '_.PNGOUT\n"' + target.as_posix() + '"\n_ALL\n\n'
+    script.write_text(commands, encoding="utf-8")
     started = time.monotonic()
     with output.with_suffix(".log").open("wb") as log:
         process = subprocess.Popen([str(discover_autocad() / "accoreconsole.exe"), "/i", str(render_input), "/s", str(script)], stdout=log, stderr=log)
         while process.poll() is None:
-            if output.is_file() and output.stat().st_size > 512:
+            if all(p.is_file() and p.stat().st_size > 512 for p in outputs):
                 try: process.wait(timeout=1)
                 except subprocess.TimeoutExpired: terminate_process_tree(process)
                 break
@@ -36,8 +52,9 @@ def render(drawing, output, window=None, timeout=60, paper=False):
                 terminate_process_tree(process)
                 raise TimeoutError("Native review render timed out")
             time.sleep(.2)
-    if not output.is_file(): raise RuntimeError("AutoCAD did not produce a review image")
-    return output
+    missing = [p.name for p in outputs if not p.is_file() or p.stat().st_size <= 512]
+    if missing: raise RuntimeError(f"AutoCAD did not produce complete review images: {missing}")
+    return outputs
 
 
 def review_regions(windows, handles):
@@ -52,7 +69,7 @@ def review_regions(windows, handles):
         box = [b[k] for k in ('left', 'bottom', 'right', 'top')]
         if not all(math.isfinite(v) for v in box) or box[2] <= box[0] or box[3] <= box[1]:
             raise ValueError(f"Invalid native bounds for {w['sourceHandle']}")
-        if not w['instancePath'].startswith('*Model_Space'):
+        if w['instancePath'].split('/')[0].casefold() != '*model_space':
             raise ValueError('Paper-space windows require explicit layout review')
         regions.append({'sourceHandle': w['sourceHandle'], 'instancePath': w['instancePath'], 'window': box})
     return regions
@@ -65,14 +82,17 @@ def render_job(job, handles):
     windows = json.loads((artifacts / 'bilingual-review-windows.json').read_text(encoding='utf-8'))['windows']
     regions = [{'window': None}] + review_regions(windows, handles)
     plan = []
+    requests = {'source': [], 'candidate': []}
     for index, region in enumerate(regions):
         label = 'overview' if index == 0 else f"{region['sourceHandle']}-{index}"
         images = []
         for role, drawing in [('source', config['sourcePath']), ('candidate', config['outputPath'])]:
             output = artifacts / f'{role}-{label}.png'
-            render(Path(drawing), output, region['window'])
+            requests[role].append((output, region['window']))
             images.append(output.name)
         plan.append(dict(region, images=images))
+    for role, drawing in [('source', config['sourcePath']), ('candidate', config['outputPath'])]:
+        render_many(Path(drawing), requests[role], timeout=max(60, len(regions) * 10))
     path = artifacts / 'review-render-plan.json'
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding='utf-8')
     return path

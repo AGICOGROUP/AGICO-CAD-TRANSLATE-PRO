@@ -10,6 +10,41 @@ from job_timing import record
 
 
 class TranslationEfficiencyTests(unittest.TestCase):
+    def test_worklist_omits_duplicate_context_but_keeps_real_variants(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp)
+            rows = [dict(recordId=str(i), plainText='水泵', protectedTokens=[],
+                         properties={'height': 2}) for i in range(2)]
+            path = job / 'exchange/manifest.input.jsonl'
+            cad_translate._atomic_write_jsonl(path, rows)
+            cad_translate.prepare_translation_worklist(job)
+            work = job / 'exchange/translation-worklist/part-0001.jsonl'
+            request = cad_translate._read_jsonl(work)[0]
+            self.assertEqual(2, request['occurrences'])
+            self.assertIn('context', request)
+            self.assertNotIn('contextVariants', request)
+            rows[1]['properties']['height'] = 4
+            cad_translate._atomic_write_jsonl(path, rows)
+            cad_translate.prepare_translation_worklist(job)
+            self.assertEqual(2, len(cad_translate._read_jsonl(work)[0]['contextVariants']))
+
+    def test_retry_clock_includes_failed_attempt_without_changing_its_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent, child = Path(tmp) / 'first', Path(tmp) / 'retry'
+            config = dict(sourceSha256='abc', outputMode='bilingual', sourceLanguage='zh-CN', targetLanguage='fr')
+            for job in (parent, child):
+                (job / 'config').mkdir(parents=True)
+                (job / 'config/export-job.json').write_text(json.dumps(config))
+            original = record(parent, 'export-start', started=100, now=100)
+            report = record(child, 'export-start', started=400, now=400, retry_from=parent)
+            self.assertEqual(300, report['elapsedSeconds'])
+            self.assertEqual(450, record(child, 'delivery-ready', now=550)['elapsedSeconds'])
+            self.assertEqual(original, json.loads((parent / 'artifacts/workflow-timing.json').read_text()))
+            config['targetLanguage'] = 'en'
+            (child / 'config/export-job.json').write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, 'same source.*mode.*language'):
+                record(child, 'export-start', now=600, retry_from=parent)
+
     def test_format_variants_share_full_translation_but_context_does_not(self):
         rows = [{"recordId": str(i), "plainText": "半成品仓", "protectedTokens": [],
                  "objectType": "AcDbText", "textRole": "text",
