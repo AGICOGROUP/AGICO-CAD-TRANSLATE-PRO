@@ -57,7 +57,7 @@ internal static class BilingualTermGroups
         if (Math.Abs(p.Z-q.Z)>h*.02) return false;
         double along=vertical ? p.Y-q.Y : q.X-p.X;
         double across=vertical ? p.X-q.X : p.Y-q.Y;
-        return Math.Abs(across)<=h*.20 && along>=h*.65 && along<=h*2.2;
+        return Math.Abs(across)<=h*.20 && along>=h*.65 && along<=h*(vertical ? 2.5 : 2.2);
     }
 
     private static double Distance(ManifestRecord a, ManifestRecord b, bool vertical) => vertical

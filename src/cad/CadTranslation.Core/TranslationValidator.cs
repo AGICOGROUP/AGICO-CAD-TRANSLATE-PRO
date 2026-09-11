@@ -153,7 +153,8 @@ public static partial class TranslationValidator
     }
 
     private static IEnumerable<string> NormalizeInvariantTokens(string value) =>
-        InvariantToken.Matches(value.Replace(@"\P", " ", StringComparison.OrdinalIgnoreCase))
+        Regex.Split(value, @"\\P", RegexOptions.IgnoreCase)
+            .SelectMany(paragraph => InvariantToken.Matches(paragraph).Cast<Match>())
             .Select(match => NormalizeInvariantToken(match.Value));
 
     private static string NormalizeInvariantToken(string value)

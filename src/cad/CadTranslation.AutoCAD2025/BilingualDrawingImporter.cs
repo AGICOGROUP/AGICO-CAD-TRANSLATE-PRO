@@ -224,7 +224,7 @@ internal static class BilingualDrawingImporter
                         continue;
                     }
                     var existing = definition.Texts.Where(t => t.RecordId != row.RecordId && rowsByHandle.ContainsKey(t.EntityHandle))
-                        .Where(t => BilingualLabelEquivalence.Matches(targetText, Plain(rowsByHandle[t.EntityHandle].RawText)))
+                        .Where(t => BilingualLabelEquivalence.MatchesNeighbor(sourcePlain, targetText, Plain(rowsByHandle[t.EntityHandle].RawText)))
                         .Where(t => HasSourceLink(access.Read<Entity>(t.ObjectId, "reuse-target", t.DefinitionName, recordId: t.RecordId, required: true)!, row) ||
                             Distance(source.Source.Bounds, t.Source.Bounds) <= source.Source.OriginalTextHeight * 4 ||
                             IsTableRowNeighbor(source.Source.Bounds, t.Source.Bounds, tableGroups[source.DefinitionName]))

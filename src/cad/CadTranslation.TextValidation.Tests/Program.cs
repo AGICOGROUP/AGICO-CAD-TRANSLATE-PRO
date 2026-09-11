@@ -2,6 +2,12 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Func<bool> Run)[]
 {
+    ("jumbo bag label does not become equipment tonnage", () => ProtectedText.Parse("9.6 吨袋包装机").ProtectedTokens.Single().Raw == "9.6"),
+    ("jumbo bag label translation preserves equipment number", () => TranslationValidator.HasSameInvariantTokens("9.6 吨袋包装机", "9.6 Jumbo Bag Packing Machine")),
+    ("actual tonne capacity remains protected", () => ProtectedText.Parse("9.6吨物料").ProtectedTokens.Single().Raw == "9.6吨"),
+    ("equipment number does not absorb next paragraph unit word", () => TranslationValidator.HasSameInvariantTokens(@"4.08\P吨包机", @"4.08\PJumbo Bag Packing Machine")),
+    ("equipment number change across paragraph remains blocked", () => !TranslationValidator.HasSameInvariantTokens(@"4.08\P吨包机", @"4.09\PJumbo Bag Packing Machine")),
+    ("same paragraph tonne capacity remains protected", () => !TranslationValidator.HasSameInvariantTokens("25吨", "26t")),
     ("drawing number abbreviation", () => TranslationValidator.HasSameInvariantTokens("图号09", "Drawing No.09")),
     ("drawing number changed", () => !TranslationValidator.HasSameInvariantTokens("图号09", "Drawing No.10")),
     ("model changed", () => !TranslationValidator.HasSameInvariantTokens("MDPX150", "MDPX160")),

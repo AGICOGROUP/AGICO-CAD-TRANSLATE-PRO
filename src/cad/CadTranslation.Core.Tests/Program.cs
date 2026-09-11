@@ -3,6 +3,14 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("bilingual_existing_name_may_omit_only_matching_source_equipment_tag", () => {
+        AssertEx.True(BilingualLabelEquivalence.MatchesNeighbor("7.17袋滤器", "7.17 Bag Filter", "Bag filter"));
+        AssertEx.True(BilingualLabelEquivalence.MatchesNeighbor("2.26旋液分离器", "2.26 Hydrocyclone", "Hydrocyclone"));
+        AssertEx.True(!BilingualLabelEquivalence.MatchesNeighbor("7.17袋滤器", "7.18 Bag Filter", "Bag filter"));
+        AssertEx.True(!BilingualLabelEquivalence.MatchesNeighbor("7.17袋滤器", "7.17 Bag Filter", "7.18 Bag filter"));
+        AssertEx.True(!BilingualLabelEquivalence.MatchesNeighbor("7.17精密袋滤器", "7.17 Fine Bag Filter", "Bag filter"));
+        AssertEx.True(!BilingualLabelEquivalence.MatchesNeighbor("1.6MPa泵", "1.6 MPa Pump", "MPa Pump"));
+    }),
     ("bilingual_grid_recovery_keeps_parameter_rows_together", () => {
         var segments=Enumerable.Range(0,13).Select(i=>new Segment2(new Point2(0,i*5),new Point2(100,i*5))).ToList();
         segments.Add(new(new Point2(0,0),new Point2(0,60)));
