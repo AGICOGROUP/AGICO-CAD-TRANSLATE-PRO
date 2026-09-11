@@ -1,12 +1,12 @@
 # CAD 翻译重构实施与验证结果
 
-日期：2026-09-11。分支：`codex/cad-translation-refactor`。仓库：`D:/AGICO-CAD-TRANSLATE-PRO/repository`。
+日期：2026-09-11。分支：`codex/cad-translation-refactor`。仓库：`D:/AGICO-CAD-TRANSLATE-PRO`。
 
 ## 实施结论
 
 保留当前 CAD 原生翻译架构，按已批准的范围重构。收益集中在消除真实误报、导入前发现文字错误、保留已完成工作、局部修正和避免重复渲染，没有扩大排版搜索或叠加人工审批。用户仍只需给文件、目标语言和替换/双语要求，AI 负责翻译、恢复、修正和视觉验收。
 
-修改前已有的 23 个文件改动先独立保存在 `c6dd8e7`，便于与本次重构区分。主分支仍为 `728ef9f`；未覆盖挂载技能、生产插件或用户原图。测试采用受信任目录中的独立分支 DLL。
+修改前已有的 23 个文件改动先独立保存在 `c6dd8e7`，便于与本次重构区分。主分支仍为 `728ef9f`。重构完成后按用户要求，将内层仓库的 168 个受跟踪文件、Git 历史和当前分支迁移到外层项目目录；逐文件 SHA256 核对一致。原外层文件和旧目录保存在 `deploy-backups/repository-migration-20260911-115147/`。迁移没有更新生产插件，也没有改动用户原图、jobs 或 runs。测试采用受信任目录中的独立分支 DLL。
 
 ## 本次实际改动
 
@@ -59,4 +59,4 @@ Skill 压力测试：旧版本会让 AI 新建任务、重新导入且无局部�
 
 测试入口：`python -m unittest discover -s tests -p "test_*.py"`；`dotnet run --project src/cad/CadTranslation.Core.Tests`；`dotnet run --project src/cad/CadTranslation.TextValidation.Tests`。原生样例与恢复测试分别为 `tests/cad/integration/run_v2_fixture.py`、`run_recovery_fixture.py`；大型结构/复查探针位于 `tests/cad/native-contact/`。
 
-本机原生证据保存在 `.superpowers/sdd/2026-09-11-cad-translation-refactor/`，包括 `native-final`、`dwg11-reviewed-inspect`、`dwg11-final-inspect`、`owner-no-edit` 和 `negative-*`。该目录不进入 Git，避免把测试 DWG、图片和大日志混入源码。本文保留复现入口与结果摘要。
+迁移前的本机原生证据归档在 `deploy-backups/repository-migration-20260911-115147/previous-repository/.superpowers/sdd/2026-09-11-cad-translation-refactor/`，包括 `native-final`、`dwg11-reviewed-inspect`、`dwg11-final-inspect`、`owner-no-edit` 和 `negative-*`。该目录不进入 Git，避免把测试 DWG、图片和大日志混入源码。本文保留复现入口与结果摘要。

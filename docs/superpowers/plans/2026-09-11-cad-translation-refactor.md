@@ -9,7 +9,7 @@
 
 ## Global Constraints
 
-- Work only on `codex/cad-translation-refactor` in repository. Baseline is `c6dd8e7`; do not modify mounted skill or production DLLs.
+- Work on `codex/cad-translation-refactor`. Baseline is `c6dd8e7`. After implementation, the user requested relocation from the nested repository to `D:/AGICO-CAD-TRANSLATE-PRO`; the mounted directory now contains this branch and its source. Production DLLs remain unchanged.
 - Never overwrite source drawings. Native tests use owned copies and branch DLLs.
 - Preserve complete technical meaning, numbers, units, source/target association and non-text geometry. Cosmetic warnings remain deliverable after AI review.
 - Run focused regression failures before fixes; reuse existing suites and representative drawings. Distinguish native timings from fresh translation timings.
