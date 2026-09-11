@@ -13,6 +13,30 @@ class RecoveryTests(unittest.TestCase):
     fixture = test_runtime_v2.RuntimeV2Tests.fixture
     native_result = test_runtime_v2.RuntimeV2Tests.native_result
 
+    def test_complete_invalid_batch_repairs_only_bad_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job, config, translations = self.fixture(root)
+            manifest = Path(config['manifestPath'])
+            rows = cad._read_jsonl(manifest) + [dict(recordId='b', inputHash='hb', plainText='阀门20', rawText='阀门20', protectedTokens=[])]
+            cad._atomic_write_jsonl(manifest, rows)
+            cad.write_export_seal(job, config)
+            cad._atomic_write_jsonl(translations, cad._read_jsonl(translations) + [dict(schemaVersion='1.0', recordId='b',
+                inputHash='hb', translatedText='Valve 21', reviewStatus='approved', reason='test')])
+            with mock.patch.object(cad, 'run_once', side_effect=AssertionError('invalid batch must not launch CAD')):
+                report = cad.run_resume(job, root)
+            self.assertEqual(['b'], report['invalidRecordIds'])
+            self.assertEqual(['b'], [r['recordId'] for r in cad._read_jsonl(Path(report['repairPath']))])
+            self.assertEqual(['a'], [r['recordId'] for r in cad._read_jsonl(Path(report['preservedTranslations']))])
+            repair = root/'repair.jsonl'
+            cad._atomic_write_jsonl(repair, [dict(recordId='b', translatedText='Valve 20')])
+            def run(op, path, working, host):
+                self.native_result(job, read_report(path))
+                return 0
+            with mock.patch.object(cad, 'require_ready'), mock.patch.object(cad, 'run_once', side_effect=run):
+                self.assertEqual('imported', cad.run_resume(job, root, translated=repair)['action'])
+            self.assertEqual({'a':'Pump', 'b':'Valve 20'}, {r['recordId']:r['translatedText'] for r in cad._read_jsonl(translations)})
+
     def test_resume_reuses_final_without_cad_and_rejects_changed_source(self):
         self.assertTrue(hasattr(cad, 'run_resume'), 'resume entry point is required')
         with tempfile.TemporaryDirectory() as tmp:

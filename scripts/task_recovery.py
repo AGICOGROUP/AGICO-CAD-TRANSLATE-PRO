@@ -106,12 +106,12 @@ def repair_translations(job, config, runtime):
             invalid.add(rid)
         by_id[rid] = row
     missing = set(sources) - by_id.keys()
-    if not missing and not invalid: return None
     if translations.is_file():
         validation = runtime.text_validation.validate_batch(Path(config["manifestPath"]), translations)
         write_report(job / "artifacts/text-validation.json", validation)
         invalid.update(error["recordId"] for error in validation["errors"]
                        if error.get("recordId") in by_id)
+    if not missing and not invalid: return None
     runtime.prepare_translation_worklist(job)
     work = [row for part in sorted((job / "exchange/translation-worklist").glob("part-*.jsonl"))
             for row in read_jsonl(part)]
