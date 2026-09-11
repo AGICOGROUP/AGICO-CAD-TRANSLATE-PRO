@@ -21,6 +21,7 @@ internal static class ReplaceImportPipeline
                 rows = Array.Empty<object>(), reason = "verified per-entity Chinese replacement" });
             DrawingVerifier.VerifyStructure(context, "replace-structure.json");
             NativeDrawing.ExportCandidate(context);
+            CandidateInspection.SealReplacement(context);
             NativeDrawing.Report(context, "replace-native-check.json", new { status = "passed", outputMode = "replace",
                 candidateSha256 = Hashing.Sha256File(context.Config.OutputPath), sourceSha256 = context.Config.SourceSha256 });
             return count;
@@ -32,8 +33,9 @@ internal static class ReplaceImportPipeline
         var compose = context.Derive(context.Config with { WorkingPath = input, SourcePath = input,
             SourceSha256 = Hashing.Sha256File(input) });
         LogicalFlowPrototype.Run(compose);
-        DrawingVerifier.VerifyStructure(context, "replace-structure.json");
         NativeDrawing.ExportCandidate(context);
+        CandidateInspection.SealReplacement(context);
+        DrawingVerifier.VerifyStructure(context, "replace-structure.json");
         NativeDrawing.Report(context, "replace-native-check.json", new { status = "passed", outputMode = "replace",
             candidateSha256 = Hashing.Sha256File(output), sourceSha256 = context.Config.SourceSha256 });
         return count;

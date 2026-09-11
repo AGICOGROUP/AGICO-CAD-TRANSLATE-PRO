@@ -19,6 +19,12 @@ public sealed class Commands
     [CommandMethod("CADTRANS_COMPOSE", CommandFlags.Session)]
     public static void Compose() => Execute("compose", LogicalFlowPrototype.Run);
 
+    [CommandMethod("CADTRANS_INSPECT", CommandFlags.Session)]
+    public static void Inspect() => Execute("inspect", CandidateInspection.Run);
+
+    [CommandMethod("CADTRANS_CORRECT", CommandFlags.Session)]
+    public static void Correct() => Execute("correct", LocalCorrectionPipeline.Run);
+
     private static void Execute(string operation, Func<JobContext, int> body)
     {
         JobContext? context = null;

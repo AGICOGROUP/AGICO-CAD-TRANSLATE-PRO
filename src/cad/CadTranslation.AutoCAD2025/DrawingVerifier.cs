@@ -147,15 +147,16 @@ internal static class DrawingVerifier
         ReadDrawing(database, path, artifactDirectory);
         using Transaction transaction = database.TransactionManager.StartTransaction();
         var tableRows = new List<string> { $"version|{database.OriginalFileVersion}" };
+        var retainedBlocks = StructureBlocks(database, transaction);
         var nonTextRows = new List<string>();
         var textEntities = new List<TextStructureSignature>();
         AddSymbolTable(tableRows, transaction, database.LayerTableId, "layers");
         AddSymbolTable(tableRows, transaction, database.LinetypeTableId, "linetypes");
         AddSymbolTable(tableRows, transaction, database.TextStyleTableId, "textStyles");
         AddSymbolTable(tableRows, transaction, database.DimStyleTableId, "dimensionStyles");
-        AddBlocks(tableRows, transaction, database.BlockTableId);
+        AddBlocks(tableRows, transaction, database.BlockTableId, retainedBlocks);
         AddLayouts(tableRows, transaction, database.LayoutDictionaryId);
-        AddEntityStructure(nonTextRows, textEntities, database, transaction, verifiedAdditions);
+        AddEntityStructure(nonTextRows, textEntities, database, transaction, verifiedAdditions, retainedBlocks);
         transaction.Commit();
         var rows = new SortedDictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
@@ -186,15 +187,12 @@ internal static class DrawingVerifier
 
     private static string FirstDifference(IReadOnlyList<string> expected, IReadOnlyList<string> actual)
     {
-        int count = Math.Min(expected.Count, actual.Count);
-        for (int index = 0; index < count; index++)
-        {
-            if (!string.Equals(expected[index], actual[index], StringComparison.Ordinal))
-                return $"expected={expected[index]}; actual={actual[index]}";
-        }
-        return expected.Count == actual.Count ? "none" : expected.Count > actual.Count
-            ? $"expected={expected[count]}; actual=<missing>"
-            : $"expected=<missing>; actual={actual[count]}";
+        // Compare multiplicities, so one missing row does not misalign every later row.
+        var left = expected.GroupBy(r => r).ToDictionary(g => g.Key, g => g.Count());
+        var right = actual.GroupBy(r => r).ToDictionary(g => g.Key, g => g.Count());
+        string? removed = left.Keys.FirstOrDefault(k => left[k] > right.GetValueOrDefault(k));
+        string? added = right.Keys.FirstOrDefault(k => right[k] > left.GetValueOrDefault(k));
+        return $"missingOrChanged={removed ?? "<none>"}; addedOrChanged={added ?? "<none>"}; counts={expected.Count}->{actual.Count}";
     }
 
     private static void AddSymbolTable(ICollection<string> rows, Transaction transaction, ObjectId tableId, string tableName)
@@ -210,12 +208,40 @@ internal static class DrawingVerifier
         foreach (string entry in entries.OrderBy(entry => entry, StringComparer.Ordinal)) rows.Add($"table|{tableName}|{entry}");
     }
 
-    private static void AddBlocks(ICollection<string> rows, Transaction transaction, ObjectId tableId)
+    // AutoCAD SaveAs garbage-collects unreachable anonymous implementation blocks,
+    // sometimes over several saves. Named library blocks remain roots: only truly
+    // unreferenced anonymous definitions are excluded, never visible instances.
+    private static HashSet<ObjectId> StructureBlocks(Database database, Transaction transaction)
+    {
+        var table = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
+        var retained = new HashSet<ObjectId>();
+        var queue = new Queue<ObjectId>();
+        foreach (ObjectId id in table)
+        {
+            var block = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
+            if (!block.IsAnonymous || block.IsLayout) { retained.Add(id); queue.Enqueue(id); }
+        }
+        while (queue.Count > 0)
+        {
+            var block = (BlockTableRecord)transaction.GetObject(queue.Dequeue(), OpenMode.ForRead);
+            foreach (ObjectId id in block)
+            {
+                var value = transaction.GetObject(id, OpenMode.ForRead);
+                ObjectId child = value switch { BlockReference reference => reference.BlockTableRecord,
+                    Dimension dimension => dimension.DimBlockId, _ => ObjectId.Null };
+                if (!child.IsNull && retained.Add(child)) queue.Enqueue(child);
+            }
+        }
+        return retained;
+    }
+
+    private static void AddBlocks(ICollection<string> rows, Transaction transaction, ObjectId tableId, IReadOnlySet<ObjectId> retained)
     {
         var table = (BlockTable)transaction.GetObject(tableId, OpenMode.ForRead);
         var entries = new List<string>();
         foreach (ObjectId id in table)
         {
+            if (!retained.Contains(id)) continue;
             var record = (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead);
             // AutoCAD may renumber anonymous dynamic blocks (*D...) while saving a drawing that has
             // an unresolved XREF. Their generated name and handle are not stable structure identities.
@@ -243,10 +269,13 @@ internal static class DrawingVerifier
         foreach (string entry in entries.OrderBy(entry => entry, StringComparer.Ordinal)) rows.Add($"table|layouts|{entry}");
     }
 
-    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction, IReadOnlySet<string>? verifiedAdditions = null)
+    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction, IReadOnlySet<string>? verifiedAdditions = null, IReadOnlySet<ObjectId>? retainedBlocks = null)
     {
+        var retainedPaths = retainedBlocks?.Select(id => (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead))
+            .Select(b => $"ROOT/BLOCK/{b.Name}/{b.Handle}").ToHashSet(StringComparer.Ordinal);
         foreach (WalkItem item in EntityWalker.Walk(database, transaction))
         {
+            if (retainedPaths is not null && !retainedPaths.Contains(string.Join("/", item.OwnerPath.Split('/').Take(4)))) continue;
             if (item.Value is not Entity entity) continue;
             if (verifiedAdditions?.Contains(entity.Handle.ToString()) == true) continue;
             string stableOwnerPath = NonTextStructureSignaturePolicy.StableOwnerPath(item.OwnerPath);

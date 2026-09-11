@@ -15,7 +15,10 @@ public sealed record JobConfig(
     string SourceLanguage,
     string TargetLanguage,
     string OutputMode,
-    string? PipelineVersion = null);
+    string? PipelineVersion = null,
+    string? CandidatePath = null,
+    string? CandidateSha256 = null,
+    string? CorrectionPath = null);
 
 public static class OutputModePolicy
 {

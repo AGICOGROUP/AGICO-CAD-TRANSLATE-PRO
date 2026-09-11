@@ -882,7 +882,7 @@ internal static class Tests
             NonTextStructureSignaturePolicy.StableEntityIdentity("1392", "ROOT/BLOCK/<anonymous-block>"));
         AssertEx.Equal("1392",
             NonTextStructureSignaturePolicy.StableEntityIdentity("1392", "ROOT/BLOCK/NAMED/138D"));
-        AssertEx.Equal("ROOT/BLOCK/<anonymous-block>",
+        AssertEx.Equal("ROOT/BLOCK/<anonymous-block>/139EB",
             NonTextStructureSignaturePolicy.StableOwnerPath("ROOT/BLOCK/*X1375/139EB"));
         AssertEx.Equal("ROOT/BLOCK/NAMED/138D",
             NonTextStructureSignaturePolicy.StableOwnerPath("ROOT/BLOCK/NAMED/138D"));

@@ -14,8 +14,8 @@ public static class NonTextStructureSignaturePolicy
     {
         ArgumentNullException.ThrowIfNull(ownerPath);
         return Regex.Replace(ownerPath,
-            @"/\*[A-Z][0-9A-F]+/[0-9A-F]+(?=/|$)",
-            "/<anonymous-block>",
+            @"/\*[A-Z][0-9A-F]+/([0-9A-F]+)(?=/|$)",
+            "/<anonymous-block>/$1",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 

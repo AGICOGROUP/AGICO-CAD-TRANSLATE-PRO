@@ -57,6 +57,8 @@ internal static class BilingualDrawingImporter
         }
         finally
         {
+            try { NativeDrawing.Report(context, "bilingual-native-timing.json", progress.Finish()); }
+            catch (System.Exception reportError) { Console.Error.WriteLine($"Timing report: {reportError.Message}"); }
             if (issues.Count > 0)
             {
                 try { NativeDrawing.Report(context, "bilingual-object-access.json", new { count = issues.Count, examples = issues.Take(100).ToArray() }); }
@@ -67,7 +69,22 @@ internal static class BilingualDrawingImporter
 
     private sealed class ImportProgress
     {
-        internal string Stage = "preflight";
+        private readonly System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+        private readonly Dictionary<string, double> seconds = new();
+        private string stage = "preflight";
+        private double last;
+        internal string Stage
+        {
+            get => stage;
+            set { Accumulate(); stage = value; }
+        }
+        private void Accumulate()
+        {
+            double now = watch.Elapsed.TotalSeconds;
+            seconds[stage] = seconds.GetValueOrDefault(stage) + now - last;
+            last = now;
+        }
+        internal object Finish() { Accumulate(); return new { totalSeconds = last, phases = seconds }; }
         internal ManifestRecord? Row;
     }
 
@@ -300,6 +317,17 @@ internal static class BilingualDrawingImporter
         NativeDrawing.Report(context, "bilingual-pairs.json", new { outputMode = "bilingual", pairs, unresolved });
         NativeDrawing.Report(context, "bilingual-term-placement.json", new {groups=termGroups});
         NativeDrawing.Report(context, "bilingual-unresolved.json", unresolvedDetails);
+        NativeDrawing.Report(context, "bilingual-table-layout.json", new { tables = tableDecisions, copies = tableCopies });
+        NativeDrawing.Report(context, "bilingual-placement-limits.json", placementLimits);
+        return VerifySaved(context, manifest, translated, pairs, unresolved, tableCopies, placementLimits, issues);
+    }
+
+    internal static int VerifySaved(JobContext context, ManifestRecord[] manifest,
+        IReadOnlyDictionary<string, TranslationRecord> translated, IReadOnlyList<Pair> pairs,
+        IReadOnlyCollection<string> unresolved, IReadOnlyList<BilingualTableCopy.CopyReceipt> tableCopies,
+        IReadOnlyDictionary<string, Rect2> placementLimits, List<CadObjectAccess.Issue> issues)
+    {
+        string output = context.Config.OutputPath;
         // Reopen saved DWG before proving source retention and target associations.
         ManifestRecord[] candidate = [];
         BilingualSavedLayoutReview.Risk[] layoutRisks = [];
@@ -312,9 +340,10 @@ internal static class BilingualDrawingImporter
                 ? translated[r.RecordId].TranslatedText != r.FormatTemplate
                 : !SourcePreserved(r, current)).Select(r => r.RecordId).ToArray();
         var missingTargets = pairs.Where(p => !candidateByHandle.TryGetValue(p.TargetHandle, out var target) ||
-            !Normalize(Plain(target.RawText)).Contains(Normalize(p.TargetText), StringComparison.OrdinalIgnoreCase)).Select(p => p.RecordId).ToArray();
+            (p.Decision == "existing-inline"
+                ? !Normalize(Plain(target.RawText)).Contains(Normalize(p.TargetText), StringComparison.Ordinal)
+                : Normalize(Plain(target.RawText)) != Normalize(p.TargetText))).Select(p => p.RecordId).ToArray();
         BilingualTableCopy.Verify(context, tableCopies);
-        NativeDrawing.Report(context, "bilingual-table-layout.json", new { tables = tableDecisions, copies = tableCopies });
         DrawingVerifier.VerifyStructure(context, "bilingual-structure.json", tableCopies.Select(c => c.TargetHandle).ToHashSet(StringComparer.OrdinalIgnoreCase));
         bool passed = changedSources.Length == 0 && missingTargets.Length == 0 && unresolved.Count == 0;
         NativeDrawing.Report(context, "bilingual-native-check.json", new { status = passed ? "passed" : "failed", outputMode = "bilingual",
@@ -519,7 +548,8 @@ internal static class BilingualDrawingImporter
         Math.Pow(Math.Max(0, Math.Max(a.Bottom - b.Top, b.Bottom - a.Top)), 2));
     private static bool SourcePreserved(ManifestRecord source, ManifestRecord current)
     {
-        if (current.RawText != source.RawText || current.ObjectType != source.ObjectType || current.OwnerPath != source.OwnerPath ||
+        if (current.RawText != source.RawText || current.ObjectType != source.ObjectType ||
+            NonTextStructureSignaturePolicy.StableOwnerPath(current.OwnerPath) != NonTextStructureSignaturePolicy.StableOwnerPath(source.OwnerPath) ||
             JsonSerializer.Serialize(current.Properties) != JsonSerializer.Serialize(source.Properties)) return false;
         bool aligned = source.Properties.HorizontalMode is not "TextLeft";
         if (!aligned) return JsonSerializer.Serialize(current.Geometry) == JsonSerializer.Serialize(source.Geometry);
@@ -546,7 +576,7 @@ internal static class BilingualDrawingImporter
         return null;
     }
     internal static string Plain(string raw) { using var text = new MText { Contents = raw }; return text.Text; }
-    private static string Normalize(string value) => Regex.Replace(value, @"[\s\p{P}]+", "").ToUpperInvariant()
+    internal static string Normalize(string value) => Regex.Replace(value, @"[\s\p{P}]+", "").ToUpperInvariant()
         .Replace("TPD", "T", StringComparison.Ordinal).Replace("TD", "T", StringComparison.Ordinal);
     private static string Escape(string text) => text.Replace("\\", "\\\\").Replace("{", "\\{").Replace("}", "\\}").Replace("\r", "").Replace("\n", "\\P");
 }

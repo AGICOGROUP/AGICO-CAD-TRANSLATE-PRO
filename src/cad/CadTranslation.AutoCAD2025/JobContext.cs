@@ -191,6 +191,8 @@ internal sealed partial class JobContext
         RequireAbsoluteFilePath("outputPath", config.OutputPath, true, jobRoot);
         RequireAbsoluteFilePath("resultPath", config.ResultPath, true, jobRoot);
         RequireAbsoluteDirectoryPath("artifactDirectory", config.ArtifactDirectory, jobRoot);
+        if (config.CandidatePath is not null) RequireAbsoluteFilePath("candidatePath", config.CandidatePath, true, jobRoot);
+        if (config.CorrectionPath is not null) RequireAbsoluteFilePath("correctionPath", config.CorrectionPath, true, jobRoot);
         if (config.TranslationPath is not null)
         {
             RequireAbsoluteFilePath("translationPath", config.TranslationPath, true, jobRoot);
