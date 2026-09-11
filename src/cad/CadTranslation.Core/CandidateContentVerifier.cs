@@ -140,28 +140,37 @@ public static class CandidateContentVerifier
 
 public static class LayoutTextNormalization
 {
-    public static string RemoveGeneratedWidthWrapper(string value)
+    public static string RemoveGeneratedWidthWrapper(
+        string value,
+        bool removeGeneratedLatinFont = false)
     {
-        if (string.IsNullOrEmpty(value) ||
-            !value.StartsWith(@"{\W", StringComparison.Ordinal) ||
-            !value.EndsWith('}'))
+        if (string.IsNullOrEmpty(value))
         {
             return value;
         }
 
-        int separator = value.IndexOf(';', 3);
-        if (separator < 0 ||
-            !double.TryParse(
-                value.AsSpan(3, separator - 3),
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out double scale) ||
-            scale < LayoutFitPolicy.MinimumWidthScale - 1e-9 ||
-            scale >= 0.999)
+        string normalized = value;
+        if (normalized.StartsWith(@"{\W", StringComparison.Ordinal) &&
+            normalized.EndsWith('}'))
         {
-            return value;
+            int separator = normalized.IndexOf(';', 3);
+            if (separator >= 0 &&
+                double.TryParse(
+                    normalized.AsSpan(3, separator - 3),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double scale) &&
+                scale >= LayoutFitPolicy.MinimumWidthScale - 1e-9 &&
+                scale < 0.999)
+            {
+                normalized = normalized.Substring(
+                    separator + 1,
+                    normalized.Length - separator - 2);
+            }
         }
 
-        return value.Substring(separator + 1, value.Length - separator - 2);
+        return removeGeneratedLatinFont
+            ? NarrativeTargetFontPolicy.RemoveLatinWrapper(normalized)
+            : normalized;
     }
 }

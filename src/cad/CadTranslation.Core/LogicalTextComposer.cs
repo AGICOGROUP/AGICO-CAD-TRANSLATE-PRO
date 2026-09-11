@@ -58,6 +58,27 @@ public static class LogicalCompositionFitPolicy
         actualHeight <= availableHeight * 0.98;
 }
 
+public static class LogicalCompositionPlacementPolicy
+{
+    public static Rect2 SelectVerticalEnvelope(
+        Rect2 sourceEnvelope,
+        IReadOnlyList<Rect2> currentBounds,
+        int expectedCount)
+    {
+        ArgumentNullException.ThrowIfNull(currentBounds);
+        if (expectedCount <= 0 || currentBounds.Count != expectedCount)
+        {
+            return sourceEnvelope;
+        }
+
+        return new Rect2(
+            sourceEnvelope.Left,
+            currentBounds.Min(bounds => bounds.Bottom),
+            sourceEnvelope.Right,
+            currentBounds.Max(bounds => bounds.Top));
+    }
+}
+
 public sealed record LogicalTextFragment(
     string Id,
     Rect2 SourceBounds,

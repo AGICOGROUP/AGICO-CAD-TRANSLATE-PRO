@@ -132,8 +132,13 @@ internal static class DrawingVerifier
             TextSlot slot = adapter.Read(value, new AdapterContext(database, transaction, sourceHash, record.OwnerPath))
                 .SingleOrDefault(candidate => string.Equals(candidate.Slot, expectedSlot, StringComparison.Ordinal))
                 ?? throw new CommandProtocolException("candidate_stale_text", "Candidate text slot is no longer readable.");
-            string actualText = widthCompressed.Contains(record.RecordId)
-                ? LayoutTextNormalization.RemoveGeneratedWidthWrapper(slot.RawText)
+            bool generatedLatinFont =
+                string.Equals(record.ObjectType, "AcDbText", StringComparison.Ordinal) &&
+                string.Equals(actualType, "AcDbMText", StringComparison.Ordinal);
+            string actualText = widthCompressed.Contains(record.RecordId) || generatedLatinFont
+                ? LayoutTextNormalization.RemoveGeneratedWidthWrapper(
+                    slot.RawText,
+                    removeGeneratedLatinFont: generatedLatinFont)
                 : slot.RawText;
             result.Add(new CandidateTextRecord(record.RecordId, value.Handle.ToString(), actualType, slot.Slot, actualText));
         }

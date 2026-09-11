@@ -442,8 +442,23 @@ internal static partial class LogicalFlowPrototype
             }
             EnsureSingleOwner(oldEntities, $"{region.RegionId} segment {segmentIndex + 1}");
 
-            double top = segments.Length == 1 ? region.Top : segment.Max(row => row.SourceBounds.Top);
-            double bottom = segments.Length == 1 ? region.Bottom : segment.Min(row => row.SourceBounds.Bottom);
+            double sourceTop = segments.Length == 1 ? region.Top : segment.Max(row => row.SourceBounds.Top);
+            double sourceBottom = segments.Length == 1 ? region.Bottom : segment.Min(row => row.SourceBounds.Bottom);
+            Rect2[] currentBounds = oldEntities
+                .Select(CadLayoutGeometry.TryLayoutBounds)
+                .Where(bounds => bounds is not null)
+                .Select(bounds => new Rect2(
+                    bounds!.MinX,
+                    bounds.MinY,
+                    bounds.MaxX,
+                    bounds.MaxY))
+                .ToArray();
+            Rect2 placementEnvelope = LogicalCompositionPlacementPolicy.SelectVerticalEnvelope(
+                new Rect2(region.Left, sourceBottom, right, sourceTop),
+                currentBounds,
+                oldEntities.Length);
+            double top = placementEnvelope.Top;
+            double bottom = placementEnvelope.Bottom;
             double availableHeight = top - bottom;
             Entity representative = RepresentativeEntity(oldEntities);
             MText replacement = CreateMText(
@@ -675,7 +690,7 @@ internal static partial class LogicalFlowPrototype
         var owner = (BlockTableRecord)transaction.GetObject(source.OwnerId, OpenMode.ForWrite, false);
         var replacement = new MText();
         replacement.SetDatabaseDefaults(database);
-        replacement.Contents = contents;
+        replacement.Contents = NarrativeTargetFontPolicy.ApplyLatinWrapper(contents);
         replacement.Attachment = attachment;
         replacement.Location = location;
         replacement.Width = Math.Max(textHeight, width);

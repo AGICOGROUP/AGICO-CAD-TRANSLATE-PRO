@@ -223,6 +223,7 @@ var tests = new (string Name, Action Run)[]
     ,("narrative_row_clusters_preserve_large_source_gaps", Tests.NarrativeRowClustersPreserveLargeSourceGaps)
     ,("narrative_row_boxes_fallback_when_source_centers_are_outside", Tests.NarrativeRowBoxesFallbackWhenSourceCentersAreOutside)
     ,("narrative_inline_fragments_wrap_as_one_visual_row", Tests.NarrativeInlineFragmentsWrapAsOneVisualRow)
+    ,("latin_narrative_dbtext_uses_a_render_safe_font_wrapper", Tests.LatinNarrativeDbTextUsesARenderSafeFontWrapper)
     ,("source_neighbor_slots_are_mutually_exclusive_on_same_row", Tests.SourceNeighborSlotsAreMutuallyExclusiveOnSameRow)
     ,("layout_v2_assigns_every_changed_record_once", Tests.LayoutV2AssignsEveryChangedRecordOnce)
     ,("layout_v2_clamps_narrative_before_right_keepout", Tests.LayoutV2ClampsNarrativeBeforeRightKeepout)
@@ -267,6 +268,7 @@ var tests = new (string Name, Action Run)[]
     ,("logical_text_composer_rebuilds_fragmented_visual_rows", Tests.LogicalTextComposerRebuildsFragmentedVisualRows)
     ,("logical_text_composer_marks_large_vertical_gaps", Tests.LogicalTextComposerMarksLargeVerticalGaps)
     ,("logical_composition_rejects_a_segment_that_still_overflows_at_the_readable_floor", Tests.LogicalCompositionRejectsOverflowAtReadableFloor)
+    ,("logical_composition_uses_current_reflowed_vertical_envelope", Tests.LogicalCompositionUsesCurrentReflowedVerticalEnvelope)
     ,("bilingual_narrative_prefers_existing_english_mtext_over_duplicate_translation", Tests.BilingualNarrativePrefersExistingEnglishMText)
     ,("bilingual_fixed_label_suppresses_equivalent_separate_chinese_label", Tests.BilingualFixedLabelSuppressesEquivalentSeparateChineseLabel)
     ,("bilingual_fixed_label_matches_inflected_title_block_labels", Tests.BilingualFixedLabelMatchesInflectedTitleBlockLabels)
@@ -477,6 +479,30 @@ internal static class Tests
         AssertEx.True(LogicalCompositionFitPolicy.ShouldReplace(
             actualHeight: 17900,
             availableHeight: 18315));
+    }
+
+    public static void LogicalCompositionUsesCurrentReflowedVerticalEnvelope()
+    {
+        var sourceEnvelope = new Rect2(618360, -21128, 634212, -14492);
+        Rect2 selected = LogicalCompositionPlacementPolicy.SelectVerticalEnvelope(
+            sourceEnvelope,
+            [
+                new Rect2(618360, -17120, 634212, -16453),
+                new Rect2(618360, -18786, 634212, -18119),
+                new Rect2(618360, -21128, 634212, -19759)
+            ],
+            expectedCount: 3);
+
+        AssertEx.Equal(-16453d, selected.Top);
+        AssertEx.Equal(-21128d, selected.Bottom);
+        AssertEx.Equal(sourceEnvelope.Left, selected.Left);
+        AssertEx.Equal(sourceEnvelope.Right, selected.Right);
+
+        Rect2 fallback = LogicalCompositionPlacementPolicy.SelectVerticalEnvelope(
+            sourceEnvelope,
+            [new Rect2(618360, -17120, 634212, -16453)],
+            expectedCount: 3);
+        AssertEx.Equal(sourceEnvelope, fallback);
     }
 
     public static void BilingualNarrativePrefersExistingEnglishMText()
@@ -2765,6 +2791,23 @@ internal static class Tests
         AssertEx.Equal(0d, packing.Placements[0].YOffset);
         AssertEx.Equal(0d, packing.Placements[1].YOffset);
         AssertEx.Equal(6d, packing.Placements[2].YOffset);
+    }
+
+    public static void LatinNarrativeDbTextUsesARenderSafeFontWrapper()
+    {
+        const string spanish = "Las juntas de dos columnas adyacentes no estarán en el mismo plano.";
+        string wrapped = NarrativeTargetFontPolicy.ApplyLatinWrapper(spanish);
+
+        AssertEx.Equal(@"{\FArial;Las juntas de dos columnas adyacentes no estarán en el mismo plano.}", wrapped);
+        AssertEx.Equal(
+            spanish,
+            LayoutTextNormalization.RemoveGeneratedWidthWrapper(
+                @"{\W0.7;{\FArial;Las juntas de dos columnas adyacentes no estarán en el mismo plano.}}",
+                removeGeneratedLatinFont: true));
+        AssertEx.Equal(
+            @"{\FArial;Línea 3\PLínea 4\PLínea 5}",
+            NarrativeTargetFontPolicy.ApplyLatinWrapper(@"Línea 3\PLínea 4\PLínea 5"));
+        AssertEx.Equal("钢柱接头", NarrativeTargetFontPolicy.ApplyLatinWrapper("钢柱接头"));
     }
 
     public static void SourceNeighborSlotsAreMutuallyExclusiveOnSameRow()

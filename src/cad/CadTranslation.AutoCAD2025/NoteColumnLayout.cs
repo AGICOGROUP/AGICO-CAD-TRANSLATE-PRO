@@ -236,7 +236,10 @@ internal static class NoteColumnLayout
         {
             foreach (WorkingText item in row.Items)
             {
-                item.Value.Contents = CadLayoutGeometry.FormatWidth(item.Target.RestoredText, widthScale);
+                string contents = item.Source is null
+                    ? item.Target.RestoredText
+                    : NarrativeTargetFontPolicy.ApplyLatinWrapper(item.Target.RestoredText);
+                item.Value.Contents = CadLayoutGeometry.FormatWidth(contents, widthScale);
                 item.Value.TextHeight = item.OriginalHeight * heightScale;
             }
 
