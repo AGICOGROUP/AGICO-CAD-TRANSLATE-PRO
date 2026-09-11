@@ -5,7 +5,6 @@ namespace CadTranslation.Core;
 
 public static partial class TranslationValidator
 {
-    private const string ChineseUnit = @"(?:毫米|厘米|千米|微米|纳米|英寸|英尺|平方米|平方毫米|平方厘米|立方米|立方毫米|毫升|千克|公斤|吨|克|兆帕|千帕|帕斯卡|牛顿|牛米|弧度|摄氏度|华氏度|分钟|小时|秒|赫兹|瓦特|千瓦|伏特|安培|欧姆|米|度|升|帕|牛|瓦|伏|安|欧)";
     private static readonly Regex Marker = MarkerPattern();
     private static readonly Regex InvariantToken = InvariantTokenPattern();
     private static readonly (string Chinese, string Symbol)[] ChineseUnitSymbols =
@@ -136,9 +135,11 @@ public static partial class TranslationValidator
         }
 
         string restoredTranslation = RestoreProtectedTokensForOutput(translatedText, protectedTokens);
-        if (!NormalizeInvariantTokens(manifest.RawText ?? string.Empty).SequenceEqual(NormalizeInvariantTokens(restoredTranslation), StringComparer.Ordinal))
+        string[] expectedInvariants = NormalizeInvariantTokens(manifest.RawText ?? string.Empty).ToArray();
+        string[] actualInvariants = NormalizeInvariantTokens(restoredTranslation).ToArray();
+        if (!expectedInvariants.SequenceEqual(actualInvariants, StringComparer.Ordinal))
         {
-            errors.Add(Error("numeric_or_protected_token_mismatch", "Numeric, unit, or model tokens changed.", manifest.RecordId, manifest.Handle));
+            errors.Add(Error("numeric_or_protected_token_mismatch", $"Numeric, unit, or model tokens changed. Expected [{string.Join(", ", expectedInvariants)}]; actual [{string.Join(", ", actualInvariants)}].", manifest.RecordId, manifest.Handle));
         }
 
         if (translation.ReviewStatus is null)
@@ -218,6 +219,6 @@ public static partial class TranslationValidator
     [GeneratedRegex("⟦P\\d{4}⟧")]
     private static partial Regex MarkerPattern();
 
-    [GeneratedRegex(@"Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)|[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:[\.,]\d+)?(?:(?:[A-Za-zμµ°/%²³]+(?:[·*/^²³-][A-Za-zμµ°/%²³]+)*)|\s*" + ChineseUnit + @")?|[A-Za-z]+(?:[-_./]?[A-Za-z0-9]+)*\d+(?:[-_./]?[A-Za-z0-9]+)*")]
+    [GeneratedRegex(@"Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)|" + ProtectedText.NumberPattern + "|" + ProtectedText.ModelPattern)]
     private static partial Regex InvariantTokenPattern();
 }
