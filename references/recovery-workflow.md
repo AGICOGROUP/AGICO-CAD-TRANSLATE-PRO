@@ -51,4 +51,16 @@ Content rewriting and adding a missing untranslated object are outside this geom
 
 `CAD_TRANSLATE_PLUGIN_DIR` selects isolated trusted branch DLLs for development; ordinary runs use the deployed plugin. Native timing includes the selected DLL fingerprints. The pure validator is deployed under `bin/text-validation`, or selected with `CAD_TRANSLATE_TEXTCLI`; source checkouts can build it once and reuse it. Rebuild the validator and native DLLs together after changing Core. Never repeatedly compile during a translation task.
 
-Use compact errors and `*-timing.json` to locate the slow/failed stage. Bilingual phase timing separates topology, bounds, tables, placement, saving and inspection. Workflow timing includes translation/review and time between commands; native reinspection time is not a fresh end-to-end translation benchmark. Finish with the mode's hash-bound [visual review](visual-audit.md) and `deliveryReady=true`.
+Before repeating a full import to fix a defect, collect the existing evidence once:
+
+```powershell
+python scripts/cad_translate.py diagnose --job "jobs/example"
+# Supply actual world coordinates; repeat --window for up to eight affected regions.
+python scripts/cad_translate.py diagnose --job "jobs/example" --window 618360 -22339 634212 -13500 --render
+```
+
+Replace the example coordinates with the affected region's actual extents. The command overwrites `artifacts/diagnostic-summary.json` with grouped risks, drawing bindings, timing and returned image paths. Rendering batches each drawing's windows in one CAD session and reuses valid cached images. It compares the source, saved pre-composition drawing when available, and current final candidate without importing or approving them. Missing/stale intermediates are excluded. Risk bounds from block definitions must be transformed to placed instances before use; historical layout risks may differ from final composition.
+
+Use the same readable region to locate where the symptom appears: source, imported text before composition, or final composition. This narrows investigation; it does not prove the cause by itself. State one concrete cause supported by the comparison, then test the affected function or a small representative fixture with the original text, dimensions and anchors. Check that the specific defect improves before paying for another full drawing regression. Do not repeatedly adjust global spacing/font parameters without new evidence. If the cause cannot be reproduced locally, use one instrumented full run to obtain the missing stage evidence, then reassess. Rendering old saved drawings is not a test of changed importer code. Use existing geometry-only correction for suitable defects; retain the complete reviewed translation batch when a fresh import is needed.
+
+Workflow timing separates the recorded task from its latest attempt and command spans from intervening translation, review, debugging and waiting. For the same source/mode/language, every fresh retry job uses `export --retry-from "jobs/previous-attempt"`; unlinked older attempts and pre-export time cannot be inferred from the last job. Repeated queries after completion do not extend its recorded finish. Native reinspection time is not a fresh end-to-end translation benchmark. Finish with the mode's hash-bound [visual review](visual-audit.md) and `deliveryReady=true`; this diagnostic workflow adds no separate acceptance gate.

@@ -846,6 +846,9 @@ def main(argv: list[str] | None = None) -> int:
     corrected = sub.add_parser("correct"); corrected.add_argument("--job", type=Path, required=True); corrected.add_argument("--corrections", type=Path, required=True); corrected.add_argument("--timeout-seconds", type=int)
     checked = sub.add_parser("check-translations"); checked.add_argument("--job", type=Path, required=True); checked.add_argument("--translations", type=Path, required=True); checked.add_argument("--report", type=Path)
     audited = sub.add_parser("audit-summary"); audited.add_argument("--job", type=Path, required=True)
+    diagnosed = sub.add_parser("diagnose"); diagnosed.add_argument("--job", type=Path, required=True)
+    diagnosed.add_argument("--window", type=float, nargs=4, action="append", default=[])
+    diagnosed.add_argument("--render", action="store_true", help="Compare saved source/intermediate/candidate windows without reimporting")
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
     elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode, args.retry_from); output = {"job": str(absolute(args.job)), "exitCode": code}
@@ -867,7 +870,11 @@ def main(argv: list[str] | None = None) -> int:
         if output.get("deliveryReady"):
             output["workflowTiming"] = record_timing(absolute(args.job), "delivery-ready")
         code = 0 if output["status"] == "passed" else 1
+    elif args.command == "diagnose":
+        from job_diagnostics import diagnose
+        output = diagnose(args.job, args.window, render=args.render)
+        code = 0
     else: output, code = status(args.job), 0
-    print(json.dumps(output, ensure_ascii=False, indent=2)); return code
+    print(json.dumps(_bounded_cli_output(output), ensure_ascii=False, indent=2)); return code
 
 if __name__ == "__main__": raise SystemExit(main())

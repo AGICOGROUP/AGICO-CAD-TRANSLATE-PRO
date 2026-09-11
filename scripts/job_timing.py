@@ -24,6 +24,8 @@ def record(job, event, started=None, *, now=None, retry_from=None):
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {
         "startedAtEpoch": started if started is not None else now,
         "budgetSeconds": 1200, "events": []}
+    if event == "delivery-ready" and data["events"] and data["events"][-1]["event"] == event:
+        return data
     if previous is not None and not path.is_file():
         data = previous
         data["retryFromJob"] = str(parent)
@@ -38,3 +40,36 @@ def record(job, event, started=None, *, now=None, retry_from=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
+
+
+def summarize(job):
+    """Read recorded spans without extending a finished task or claiming CPU time."""
+    path = Path(job) / 'artifacts/workflow-timing.json'
+    if not path.is_file():
+        return {'status': 'not-recorded'}
+    data = json.loads(path.read_text(encoding='utf-8'))
+    events = data.get('events', [])
+    if not events:
+        return {'status': 'not-recorded'}
+    end = events[-1]['atEpoch']
+    start = data['startedAtEpoch']
+    spans = []
+    for left, right in zip(events, events[1:]):
+        seconds = right['atEpoch'] - left['atEpoch']
+        operation = left['event'].removesuffix('-start')
+        managed = (left['event'].endswith('-start') and
+                   right['event'] in {operation + '-finished', operation + '-failed'} and
+                   left.get('job') == right.get('job'))
+        spans.append({'from': left['event'], 'to': right['event'],
+                      'seconds': seconds, 'command': managed})
+    command_seconds = sum(s['seconds'] for s in spans if s['command'])
+    return {'status': 'recorded', 'recordedTaskSeconds': round(end - start, 3),
+            'attemptSeconds': round(end - data.get('attemptStartedAtEpoch', start), 3),
+            'commandSpanSeconds': round(command_seconds, 3),
+            'betweenCommandSeconds': round(end - start - command_seconds, 3),
+            'lastEvent': events[-1]['event'], 'retryFromJob': data.get('retryFromJob'),
+            'largestSpans': [dict(s, seconds=round(s['seconds'], 3))
+                             for s in sorted(spans, key=lambda s: s['seconds'], reverse=True)[:5]],
+            'scope': 'Recorded events only; gaps include translation, review, debugging and waiting, not just waste. '
+                     'Earlier unlinked attempts and pre-export time are not included.',
+            'path': str(path)}
