@@ -7,9 +7,12 @@ namespace CadTranslation.Core;
 public static partial class ProtectedText
 {
     private const string ChineseUnit = @"(?:毫米|厘米|千米|微米|纳米|英寸|英尺|平方米|平方毫米|平方厘米|立方米|立方毫米|毫升|千克|公斤|吨|克|兆帕|千帕|帕斯卡|牛顿|牛米|弧度|摄氏度|华氏度|分钟|小时|秒|赫兹|瓦特|千瓦|伏特|安培|欧姆|米|度|升|帕|牛|瓦|伏|安|欧)";
-    // Only recognized engineering units may attach to a number; prose is never a unit.
-    private const string UnitSymbol = @"(?i:MPa|kPa|Pa|bar|psi|mm|cm|km|[μµ]m|nm|kg|mL|Hz|kWh|kW|kV|mA|rpm|tpd|rad|min|in|ft|°C|°F|[mgtNsLhWVAΩ°%])(?:[²³]|\^[23])?";
-    internal const string NumberPattern = @"[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:[\.,]\d+)?(?:\s*(?:" + UnitSymbol + @"(?:[·*/-]" + UnitSymbol + @")*(?![A-Za-z])|" + ChineseUnit + @"))?";
+    // Compose recognized physical units with SI prefixes, rather than listing
+    // individual prefixed units. Symbols are case-sensitive (mW is not MW).
+    private const string SiPrefix = @"(?:da|[QRYZEPTGMkhdcmμµunpfazyrq])?";
+    private const string SiUnit = @"(?:Pa|Hz|Wh|Ah|VA|Nm|Wb|Bq|Gy|Sv|kat|mol|cd|N|W|J|V|A|Ω|S|F|H|T|C|K|m|g|s|L|l)";
+    private const string UnitSymbol = @"(?:" + SiPrefix + SiUnit + @"|bar|psi|rpm|tpd|rad|sr|min|in|ft|[tdh]|°C|°F|[°%])(?:[²³]|\^[23])?";
+    internal const string NumberPattern = @"[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:[\.,]\d+)?(?:\s*(?:" + UnitSymbol + @"(?:[·*/-]" + UnitSymbol + @")*(?![A-Za-z0-9])|" + ChineseUnit + @"))?";
     // No. is a drawing-number label, whereas A-20 and MDPX150 are model codes.
     internal const string ModelPattern = @"(?<![A-Za-z0-9])(?!(?i:No)\.)[A-Za-z]+(?:[-_./]?[A-Za-z0-9]+)*\d+(?:[-_./]?[A-Za-z0-9]+)*";
     private static readonly Regex Placeholder = PlaceholderPattern();

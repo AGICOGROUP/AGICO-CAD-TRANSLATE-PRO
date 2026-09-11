@@ -167,7 +167,11 @@ public static partial class TranslationValidator
                 break;
             }
         }
-        return normalized.ToUpperInvariant();
+        // Model identifiers retain their existing case-insensitive comparison;
+        // physical unit prefixes must preserve case (milli versus mega).
+        return normalized.Length > 0 && char.IsAsciiLetter(normalized[0])
+            ? normalized.ToUpperInvariant()
+            : normalized.Replace('μ', 'µ');
     }
 
     public static string RestoreProtectedTokens(string value, IReadOnlyList<ProtectedToken> tokens)
