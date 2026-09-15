@@ -6,6 +6,126 @@ using CadTranslation.AutoCAD2025;
 
 public class ContactTests
 {
+    [CommandMethod("CAD_NEAR_LABEL_PROBE")]
+    public void ProbeNearby()
+    {
+        string job=Environment.GetEnvironmentVariable("CAD_LAYOUT_REVIEW_JOB")!;
+        string report=Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!;
+        try
+        {
+            var rows=NativeDrawing.ReadRows<CadTranslation.Contracts.ManifestRecord>(Path.Combine(job,"exchange/manifest.input.jsonl"));
+            using var pairsJson=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"artifacts/bilingual-pairs.json")));
+            var pairs=System.Text.Json.JsonSerializer.Deserialize<BilingualDrawingImporter.Pair[]>(pairsJson.RootElement.GetProperty("pairs").GetRawText(),CadTranslation.Contracts.JsonDefaults.Options)!;
+            var selected=pairs.Where(p=>new[]{"9E87EF","9E8BAB","9E7674"}.Contains(p.SourceHandle)).ToArray();
+            Assert(selected.Length==3,"the local probe requires all three labels from its fixed drawing fixture");
+            var excluded=selected.Select(p=>p.TargetHandle).ToHashSet();
+            using var db=NativeDrawing.Open(Path.Combine(job,"results/candidate.dwg"));
+            var prior=HostApplicationServices.WorkingDatabase;
+            try
+            {
+                HostApplicationServices.WorkingDatabase=db;
+                using var tx=db.TransactionManager.StartTransaction();
+                var access=new CadObjectAccess(db,tx,new List<CadObjectAccess.Issue>());
+                var inputs=rows.Select(r=>new LayoutWriteInput(db.GetObjectId(false,new Handle(Convert.ToInt64(r.Handle,16)),0),r,
+                    pairs.FirstOrDefault(p=>p.RecordId==r.RecordId)?.TargetText??r.RawText,false)).ToArray();
+                var baseline=DrawingTopologyCapture.Capture(db,tx,inputs,access);
+                baseline=baseline with {Definitions=baseline.Definitions.Select(d=>d with {Texts=d.Texts.Where(t=>!excluded.Contains(t.EntityHandle)).ToArray()}).ToArray()};
+                var definitions=baseline.Definitions.ToDictionary(d=>d.Name);
+                typeof(BilingualDrawingImporter).GetMethod("ProjectNearbyBoundaries",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,new object[]{definitions,baseline,inputs});
+                var results=new List<object>();
+                foreach(var pair in selected)
+                {
+                    var source=baseline.Definitions.SelectMany(d=>d.Texts).Single(t=>t.EntityHandle==pair.SourceHandle);
+                    var row=rows.Single(r=>r.Handle==pair.SourceHandle);
+                    var original=(DBText)tx.GetObject(source.ObjectId,OpenMode.ForRead);
+                    using var text=new MText();text.SetDatabaseDefaults(db);text.Attachment=AttachmentPoint.TopLeft;
+                    text.TextStyleId=original.TextStyleId;text.Normal=original.Normal;text.Rotation=original.Rotation;
+                    var occupied=baseline.Definitions.SelectMany(d=>d.Texts.SelectMany(t=>d.Name==source.DefinitionName
+                        ? new[]{t.Source.Bounds}:InstanceOccupancyProjection.Project(t.Source.Bounds,d.Name,source.DefinitionName,baseline.BlockInstances))).ToList();
+                    var trace=new BilingualPlacementTrace();
+                    object?[] args={text,pair.TargetText,source,definitions[source.DefinitionName],occupied,row.Geometry.InsertionPoint.Z,source.Source.Bounds,0d,trace};
+                    bool placed=(bool)typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,args)!;
+                    var trials=new List<object>();
+                    var def=definitions[source.DefinitionName];
+                    var hints=def.BoundarySegments.Select(s=>new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY))
+                        .Where(b=>BilingualDrawingImporter.Intersects(trace.Allowed,b,.001)).Distinct()
+                        .OrderBy(b=>BilingualLocalPlacement.Gap(source.Source.Bounds,b)).Take(24).ToArray();
+                    foreach(double sc in new[]{.45,.35})
+                    foreach(double factor in new[]{1.0,.8})
+                    foreach(double widthFactor in new[]{.8,.5,.35})
+                    {
+                        text.TextHeight=source.Source.OriginalTextHeight*sc;
+                        text.Contents="{\\W"+factor.ToString(System.Globalization.CultureInfo.InvariantCulture)+";"+pair.TargetText+"}";
+                        text.Width=Math.Max(source.Source.OriginalTextHeight,BilingualPlacementChecks.AlongText(source.Source.Bounds,text.Rotation)*widthFactor-source.Source.OriginalTextHeight*.24);
+                        var fp=BilingualPlacementChecks.Footprint(text);
+                        var slots=BilingualLocalPlacement.Candidates(trace.Allowed,source.Source.Bounds,fp.Width,fp.Height,occupied,source.Source.OriginalTextHeight*.12,hints,
+                            b=>!def.BoundarySegments.Any(s=>BilingualDrawingImporter.Crosses(b,s)) && !def.ProtectedGeometry.Any(g=>!g.Bounds.Contains(source.Source.Bounds) && BilingualDrawingImporter.Intersects(b,g.Bounds,0)));
+                        var close=slots.Where(b=>BilingualLocalPlacement.Gap(source.Source.Bounds,b)<=source.Source.OriginalTextHeight*2).Take(32).ToArray();
+                        var detail=new BilingualPlacementTrace();int accepted=0;
+                        foreach(var slot in close){BilingualPlacementChecks.Move(text,fp,slot.Left,slot.Top,row.Geometry.InsertionPoint.Z);
+                            if(BilingualPlacementChecks.Accept(text,slot,trace.Allowed,source,def,occupied,source.Source.OriginalTextHeight*.12,detail,out _))accepted++;}
+                        trials.Add(new{sc,factor,width=text.Width,footprintWidth=fp.Width,footprintHeight=fp.Height,total=slots.Count,near=close.Length,accepted,rejections=detail.Counts,
+                            first=detail.Examples.FirstOrDefault()});
+                    }
+                    results.Add(new{pair.SourceHandle,pair.TargetText,source.Source,placed,bounds=args[6],scale=args[7],normal=text.Normal,trials,trace=trace.Report(baseline,pairs,source.DefinitionName)});
+                }
+                File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new{status="passed",scope="Read-only local diagnostic; no drawing writes or delivery approval; background source MText uses captured saved bounds",results},CadTranslation.Contracts.JsonDefaults.Options));
+            }
+            finally{HostApplicationServices.WorkingDatabase=prior;}
+        }
+        catch(System.Exception ex){File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new{status="failed",error=ex.ToString()}));}
+    }
+    [CommandMethod("CAD_NEAR_LABEL_TEST")]
+    public void NearLabel()
+    {
+        string report = Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!;
+        try
+        {
+            using var text = new MText(); text.SetDatabaseDefaults(); text.Attachment = AttachmentPoint.TopLeft;
+            var box = new Rect2(0,0,10,3);
+            const string contents = "Compressed Air and Nitrogen Station";
+            var source = new CadLayoutText(ObjectId.Null,"near","model","1","AcDbText",contents,true,
+                new TextLayoutSnapshot("near",box,box.Center,3),null);
+            var definition = new CadDefinitionTopology("model","1",[],[],[source],[]);
+            var occupied = new List<Rect2> { box, new(-100,-8,0,100), new(10,-8,100,100), new(0,3.5,10,100) };
+            var method = typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
+            object?[] args = {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            bool placed = (bool)method.Invoke(null,args)!;
+            var result = (Rect2)args[6]!;
+            Assert(placed && text.Text == contents && text.TextHeight >= 1.05 - 1e-9 &&
+                result.Top <= -.35 && result.Top >= -3 && result.Left >= .35 && result.Right <= 9.65,
+                $"use the readable wrapped pocket next to the source before a distant single line: placed={placed}, height={text.TextHeight}, bounds={result}");
+            Assert(occupied.All(o=>!BilingualDrawingImporter.Intersects(result,o,.35)),"near text still needs full collision clearance");
+            // A wide source caption can sit above a narrower free pocket.
+            const string narrowContents = "Air and Gas Flow Control Room";
+            occupied = new List<Rect2> { box, new(-100,-16,0,100), new(7.5,-16,100,0), new(10,0,100,100), new(0,3.5,10,100) };
+            args = new object?[] {text,narrowContents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            placed = (bool)method.Invoke(null,args)!;
+            var narrow = (Rect2)args[6]!;
+            Assert(placed && narrow.Top >= -3 && narrow.Left >= .35 && narrow.Right <= 7.15 &&
+                text.TextHeight >= 1.05-1e-9 && text.Text == narrowContents,
+                $"wrap to the available pocket, not just the source caption width: {narrow}");
+            Assert(occupied.All(o=>!BilingualDrawingImporter.Intersects(narrow,o,.35)),"narrow placement retains obstacle clearance");
+            args = new object?[] {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            placed = (bool)method.Invoke(null,args)!;
+            var condensed = (Rect2)args[6]!;
+            Assert(placed && condensed.Top>=-3 && condensed.Left>=.35 && condensed.Right<=7.15 &&
+                text.TextHeight>=1.05-1e-9 && text.Text==contents,
+                $"try modest width fitting before moving an intact long word far away: {condensed}");
+            var gridMethod=typeof(BilingualDrawingImporter).GetMethod("TryNearbyGrid",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!;
+            var allowed=new Rect2(-20,-20,30,30);
+            args=new object?[]{text,narrowContents,source,definition,allowed,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            placed=(bool)gridMethod.Invoke(null,args)!;
+            var grid=(Rect2)args[7]!;
+            Assert(placed && BilingualLocalPlacement.Gap(box,grid)<=12 && text.Text==narrowContents &&
+                allowed.Contains(grid) && occupied.All(o=>!BilingualDrawingImporter.Intersects(grid,o,.35)),
+                "bounded grid fallback must retain full content, proximity and clearance");
+            args=new object?[]{text,narrowContents,source,definition,allowed,new List<Rect2>{allowed},0d,box,0d,new BilingualPlacementTrace()};
+            Assert(!(bool)gridMethod.Invoke(null,args)!,"grid fallback must fail safely when no whitespace exists");
+            File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new {status="passed",result,narrow,height=text.TextHeight}));
+        }
+        catch (System.Exception ex) { File.WriteAllText(report,System.Text.Json.JsonSerializer.Serialize(new {status="failed",error=ex.ToString()})); }
+    }
     [CommandMethod("CAD_BILINGUAL_GROUP_TEST")]
     public void GroupDrawing()
     {
@@ -217,6 +337,14 @@ public class ContactTests
         Assert(risks.Any(r=>r.Code=="outside-placement-region" && r.TargetHandle=="BB") &&
             risks.Count(r=>r.Code=="saved-text-overlap" && r.OtherHandle=="CC")==1,
             "saved bilingual review must expose actual overflow and overlap, without double-counting term followers");
+        Assert(!risks.Any(r=>r.Code=="distant-bilingual-label"), "a nearby label is not distant");
+        var far = new Rect2(20,0,25,2);
+        var farRows = new[]{rows[0],Row("new","BB",far)};
+        var farPair = pair with { Bounds=far };
+        Assert(BilingualSavedLayoutReview.Inspect(new[]{farPair},farRows,new Dictionary<string,Rect2>())
+            .Any(r=>r.Code=="distant-bilingual-label"), "a remote individual label requires association review");
+        Assert(!BilingualSavedLayoutReview.Inspect(new[]{farPair with {PlacementStrategy="table-copy"}},farRows,new Dictionary<string,Rect2>())
+            .Any(r=>r.Code=="distant-bilingual-label"), "table copies are not individual nearby labels");
     }
 
     private static void RotatedLocalSearch()

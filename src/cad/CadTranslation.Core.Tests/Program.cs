@@ -3,6 +3,56 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("bilingual_candidate_budget_is_applied_after_geometry_clearance", () => {
+        var source=new Rect2(0,0,10,3);
+        var hints=Enumerable.Range(0,40).Select(i=>new Rect2(i*.25,-15,i*.25,15)).ToArray();
+        var slots=BilingualLocalPlacement.Candidates(new Rect2(-20,-20,30,20),source,4,2,[source],.1,hints,
+            b=>b.Left>17 && b.Bottom>10);
+        AssertEx.True(slots.Count>0 && slots.Count<=128);
+        AssertEx.True(slots.All(b=>b.Left>17 && b.Bottom>10));
+    }),
+    ("bilingual_dense_hints_cannot_prune_all_adjacent_anchors", () => {
+        var source=new Rect2(0,0,10,3);
+        var hints=Enumerable.Range(0,40).Select(i=>new Rect2(-20,i*.075,30,i*.075)).ToArray();
+        var slots=BilingualLocalPlacement.Candidates(new Rect2(-20,-20,30,20),source,4,2,[source],.1,hints);
+        AssertEx.True(slots.Any(b=>b.Top<0 && BilingualLocalPlacement.Gap(source,b)<.2));
+    }),
+    ("bilingual_boundary_hints_find_a_column_gap_without_filling_diagonal_geometry", () => {
+        var source = new Rect2(0,15,25,18);
+        var allowed = new Rect2(-20,-20,45,38);
+        Rect2[] occupied=[source];
+        bool InColumn(Rect2 b)=>b.Left>8 && b.Right<20 && b.Top>13 && b.Top<15;
+        AssertEx.True(!BilingualLocalPlacement.Candidates(allowed,source,10,3,occupied,.1).Any(InColumn));
+        var hints=new[]{new Rect2(8,-20,8,38),new Rect2(20,-20,20,38)};
+        AssertEx.True(BilingualLocalPlacement.Candidates(allowed,source,10,3,occupied,.1,hints).Any(InColumn));
+    }),
+    ("bilingual_foreign_boundaries_follow_instances_without_filling_their_boxes", () => {
+        BlockInstancePath[] instances = [new("road","model/road",Transform2.Translation(10,20)),
+            new("label","model/label",Transform2.Translation(4,6)),
+            new("label","paper/label",Transform2.Identity)];
+        var projected=InstanceOccupancyProjection.ProjectSegments([new(new(0,0),new(2,3))],"road","label",instances).ToArray();
+        AssertEx.Equal(1,projected.Length);
+        AssertEx.Equal(new Segment2(new(6,14),new(8,17)),projected[0]);
+        AssertEx.Equal(0,InstanceOccupancyProjection.ProjectSegments([projected[0]],"road","road",instances).Count());
+    }),
+    ("bilingual_proximity_uses_edge_gap_not_translation_length", () => {
+        var source = new Rect2(0,0,3,2);
+        AssertEx.Equal(1.0, BilingualLocalPlacement.Gap(source,new Rect2(0,-3,50,-1)));
+        AssertEx.Equal(5.0, BilingualLocalPlacement.Gap(source,new Rect2(6,6,10,9)));
+        AssertEx.Equal(0.0, BilingualLocalPlacement.Gap(source,new Rect2(1,1,4,3)));
+    }),
+    ("rotated_short_label_may_search_just_outside_a_tight_closed_frame", () => {
+        var frame = new Rect2(0, 0, 5.5, 25);
+        var source = new Rect2(5.0, 8, 5.45, 8.55);
+        var expanded = BilingualPlacementPolicy.AllowedForTightRotatedLabel(
+            frame, source, 0.36, Math.PI / 2, isTableCell: false);
+        AssertEx.True(expanded.Right > frame.Right);
+        AssertEx.True(expanded.Contains(frame));
+        AssertEx.Equal(frame, BilingualPlacementPolicy.AllowedForTightRotatedLabel(
+            frame, source, 0.36, Math.PI / 2, isTableCell: true));
+        AssertEx.Equal(frame, BilingualPlacementPolicy.AllowedForTightRotatedLabel(
+            frame, source, 0.36, 0, isTableCell: false));
+    }),
     ("bilingual_existing_name_may_omit_only_matching_source_equipment_tag", () => {
         AssertEx.True(BilingualLabelEquivalence.MatchesNeighbor("7.17袋滤器", "7.17 Bag Filter", "Bag filter"));
         AssertEx.True(BilingualLabelEquivalence.MatchesNeighbor("2.26旋液分离器", "2.26 Hydrocyclone", "Hydrocyclone"));

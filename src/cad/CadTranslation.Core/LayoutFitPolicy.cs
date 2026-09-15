@@ -152,6 +152,23 @@ public static class BilingualPlacementPolicy
         return new Rect2(left, cell.Bottom + margin, left + width, cell.Bottom + margin + height);
     }
 
+    public static Rect2 AllowedForTightRotatedLabel(
+        Rect2 container, Rect2 source, double textHeight, double rotation, bool isTableCell)
+    {
+        if (isTableCell || textHeight <= 0 || Math.Abs(Math.Sin(rotation)) < .25 ||
+            source.Width > textHeight * 2 || source.Height > textHeight * 2)
+            return container;
+
+        double edgeDistance = new[] {
+            source.Left - container.Left, container.Right - source.Right,
+            source.Bottom - container.Bottom, container.Top - source.Top }.Min();
+        if (edgeDistance > textHeight * 1.5) return container;
+
+        double margin = textHeight * 4;
+        return new Rect2(container.Left - margin, container.Bottom - margin,
+            container.Right + margin, container.Top + margin);
+    }
+
     public static IReadOnlyList<Rect2> EmergencyCandidates(Rect2 allowed, Rect2 source, double width, double height, double margin)
     {
         if (width <= 0 || height <= 0 || width + margin * 2 > allowed.Width || height + margin * 2 > allowed.Height)

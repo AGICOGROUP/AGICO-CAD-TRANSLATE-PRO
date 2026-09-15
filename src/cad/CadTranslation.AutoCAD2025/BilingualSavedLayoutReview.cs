@@ -56,6 +56,10 @@ internal static class BilingualSavedLayoutReview
                 Add("outside-placement-region");
             if (!pair.Bounds.Contains(actual, tolerance)) Add("saved-bounds-expanded");
             if (pair.HeightScale < .35) Add("small-target-text");
+            if (pair.PlacementStrategy is "nearby" or "cell-local-or-nearby" &&
+                byHandle.TryGetValue(pair.SourceHandle, out var original) && Bounds(original) is Rect2 sourceBox &&
+                BilingualLocalPlacement.Gap(sourceBox,actual)>original.Properties.Height*2)
+                Add("distant-bilingual-label",pair.SourceHandle);
             foreach (var other in byOwner[target.OwnerPath])
             {
                 if (other.Row.Handle.Equals(pair.TargetHandle, StringComparison.OrdinalIgnoreCase)) continue;

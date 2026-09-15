@@ -79,6 +79,22 @@ public static class BlockInstanceExpander
 
 public static class InstanceOccupancyProjection
 {
+    public static IEnumerable<Segment2> ProjectSegments(IReadOnlyList<Segment2> segments,
+        string sourceDefinition, string targetDefinition, IReadOnlyList<BlockInstancePath> instances)
+    {
+        if (segments.Count == 0 || sourceDefinition == targetDefinition) yield break;
+        var targets = instances.Where(i => i.DefinitionId == targetDefinition)
+            .Select(i => (Root: Root(i.Path), Transform: i.WorldTransform)).ToArray();
+        foreach (var source in instances.Where(i => i.DefinitionId == sourceDefinition))
+        foreach (var target in targets.Where(i => i.Root == Root(source.Path)))
+        {
+            if (!target.Transform.TryInverse(out var inverse)) continue;
+            var transform = inverse.Compose(source.WorldTransform);
+            foreach (var segment in segments)
+                yield return new Segment2(transform.Apply(segment.Start), transform.Apply(segment.End));
+        }
+    }
+
     public static Rect2[] Project(Rect2 bounds, string sourceDefinition, string targetDefinition,
         IReadOnlyList<BlockInstancePath> instances)
     {
