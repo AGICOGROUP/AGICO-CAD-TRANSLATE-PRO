@@ -13,6 +13,43 @@ class RecoveryTests(unittest.TestCase):
     fixture = test_runtime_v2.RuntimeV2Tests.fixture
     native_result = test_runtime_v2.RuntimeV2Tests.native_result
 
+    def test_repeated_bilingual_import_reuses_candidate_without_placing_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job, config, translations = self.fixture(root, 'bilingual')
+            calls = []
+            def run(op, path, working, host):
+                calls.append(op)
+                self.native_result(job, read_report(path))
+                return 0
+            with mock.patch.object(cad, 'require_ready'), mock.patch.object(cad, 'run_once', side_effect=run):
+                self.assertEqual(0, cad.run_import(job, translations, root))
+                before = Path(config['outputPath']).read_bytes()
+                self.assertEqual(0, cad.run_import(job, translations, root))
+            self.assertEqual(['import'], calls)
+            self.assertEqual(before, Path(config['outputPath']).read_bytes())
+            report = read_report(job / 'artifacts/import-recovery.json')
+            self.assertEqual('reused', report['action'])
+            self.assertEqual('review', report['nextAction'])
+            self.assertFalse(report['deliveryReady'])
+
+    def test_repeated_bilingual_import_does_not_overwrite_bound_translations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job, config, translations = self.fixture(root, 'bilingual')
+            def run(op, path, working, host):
+                self.native_result(job, read_report(path))
+                return 0
+            with mock.patch.object(cad, 'require_ready'), mock.patch.object(cad, 'run_once', side_effect=run):
+                cad.run_import(job, translations, root)
+            before = translations.read_bytes()
+            other = root / 'new-translations.jsonl'
+            other.write_bytes(before.replace(b'Pump', b'New pump'))
+            with mock.patch.object(cad, 'run_once', side_effect=AssertionError('must not launch CAD')):
+                with self.assertRaisesRegex(ValueError, 'fresh job'):
+                    cad.run_import(job, other, root)
+            self.assertEqual(before, translations.read_bytes())
+
     def test_complete_invalid_batch_repairs_only_bad_row(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

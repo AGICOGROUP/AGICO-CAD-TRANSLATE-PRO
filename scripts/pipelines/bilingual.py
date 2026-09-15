@@ -60,6 +60,23 @@ class BilingualPipeline:
         return report
 
     def run_import(self, job, translations, root, timeout, config, runtime):
+        # Layout retries operate on the retained drawing. Re-running placement for
+        # unchanged text costs a full import and can discard reviewed local edits.
+        if (job / 'artifacts/candidate-binding.json').is_file():
+            from task_recovery import retained_candidate, resume
+            owned = job / 'exchange/translations.output.jsonl'
+            if digest(translations) != digest(owned):
+                raise ValueError('Translations changed; use a fresh job for a new bound import.')
+            candidate, _ = retained_candidate(job, config)
+            if candidate is not None:
+                report = resume(job, root, timeout, runtime)
+                report['layoutCorrection'] = {
+                    'command': 'correct',
+                    'instruction': 'For observed layout defects, batch edits to existing target text and '
+                                   'review the affected regions plus an overview. Use a fresh job only when '
+                                   'content or importer changes require full regression.'}
+                write_report(job / 'artifacts/import-recovery.json', report)
+                return report.get('exitCode', 0)
         pre = self.check_translations(Path(config["manifestPath"]), translations,
             job / "artifacts" / "bilingual-preimport.json", runtime.validate_complete_translations)
         if pre["status"] != "passed": raise ValueError("Bilingual target-only translation gate failed.")

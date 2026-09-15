@@ -64,6 +64,29 @@ internal static class BilingualGroupLayout
             var remaining = d.Texts.Where(t => byId.ContainsKey(t.RecordId) && !tableIds.Contains(t.RecordId) &&
                 t.Source.OriginalTextHeight > 0 && Math.Abs(byId[t.RecordId].Manifest.Geometry.RotationRadians) < 1e-6 &&
                 byId[t.RecordId].Manifest.ObjectType is "AcDbText" or "AcDbMText").ToList();
+            double narrativeHeight = remaining.Select(t => t.Source.OriginalTextHeight)
+                .Where(value => value > 0).OrderBy(value => value).DefaultIfEmpty(1).ElementAt(remaining.Count / 2);
+            NarrativeOccupancyGroup[] narrativeGroups = AuthoritativeNarrativeSelector.SelectPanelGroups(
+                remaining.Select(t => new FragmentedNarrativeSample(
+                    t.RecordId,
+                    t.Source.Bounds,
+                    sourcePlain[t.RecordId],
+                    Eligible(t))).ToArray(),
+                narrativeHeight);
+            var narrativeIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (NarrativeOccupancyGroup narrative in narrativeGroups)
+            {
+                CadLayoutText[] requests = narrative.MemberIds
+                    .Where(eligible.Contains)
+                    .Select(id => d.Texts.First(text => text.RecordId == id))
+                    .OrderByDescending(t => t.Source.Bounds.Center.Y)
+                    .ThenBy(t => t.Source.Bounds.Left)
+                    .ToArray();
+                if (requests.Length < 3) continue;
+                groups.Add((requests, narrative.Region.Bounds, "note-block"));
+                foreach (string id in narrative.MemberIds) narrativeIds.Add(id);
+            }
+            remaining.RemoveAll(t => narrativeIds.Contains(t.RecordId));
             while (remaining.Count > 0)
             {
                 var seed=remaining[0]; remaining.RemoveAt(0);
@@ -97,8 +120,11 @@ internal static class BilingualGroupLayout
                 double sourceHeight=group.Rows.Min(t=>t.Source.OriginalTextHeight);
                 var frame=frameRegions.Where(r=>r.Bounds.Contains(group.Source) && r.Bounds.Area>group.Source.Area*1.1)
                     .OrderBy(r=>r.Bounds.Area).FirstOrDefault();
-                var allowed=frame?.Bounds ?? new Rect2(group.Source.Left-sourceHeight*36,group.Source.Bottom-sourceHeight*36,
-                    group.Source.Right+sourceHeight*36,group.Source.Top+sourceHeight*36);
+                var expanded=new Rect2(group.Source.Left-sourceHeight*60,group.Source.Bottom-sourceHeight*60,
+                    group.Source.Right+sourceHeight*60,group.Source.Top+sourceHeight*60);
+                var allowed=frame is null || group.Strategy=="table-aligned-block"
+                    ? frame?.Bounds ?? expanded
+                    : Union(new[]{frame.Bounds,expanded});
                 var textObstacles=occupied[d.Name].Where(b=>BilingualDrawingImporter.Intersects(allowed,b,sourceHeight*.2)).ToArray();
                 var display=group.Rows.Select(row=>{
                     if(group.Strategy!="table-aligned-block") return targetPlain[row.RecordId];
@@ -123,7 +149,7 @@ internal static class BilingualGroupLayout
                         }
                         double w=sizes.Max(b=>b.Width), total=sizes.Sum(b=>b.Height+gap)-gap;
                         if(w>allowed.Width || total>allowed.Height) continue;
-                        foreach(var destination in Destinations(group.Source,w,total,sourceHeight))
+                        foreach(var destination in Destinations(group.Source,w,total,sourceHeight,allowed,frame?.Bounds))
                         {
                             var textConflict=textObstacles.Where(b=>BilingualDrawingImporter.Intersects(destination,b,height*.2)).ToArray();
                             var lines=d.BoundarySegments.Where(s=>BilingualDrawingImporter.Crosses(destination,s)).Take(1).ToArray();
@@ -171,10 +197,17 @@ internal static class BilingualGroupLayout
         return text;
     }
 
-    internal static IEnumerable<Rect2> Destinations(Rect2 source,double w,double h,double height)
+    internal static IEnumerable<Rect2> Destinations(Rect2 source,double w,double h,double height,Rect2 allowed,Rect2? innerFrame)
     {
         foreach(double gap in new[]{height,3*height,6*height,10*height})
         {
+            if(innerFrame is Rect2 inner)
+            {
+                yield return new(source.Left,inner.Top+gap,source.Left+w,inner.Top+gap+h);
+                yield return new(source.Left,inner.Bottom-gap-h,source.Left+w,inner.Bottom-gap);
+                yield return new(source.Center.X-w/2,inner.Top+gap,source.Center.X+w/2,inner.Top+gap+h);
+                yield return new(source.Center.X-w/2,inner.Bottom-gap-h,source.Center.X+w/2,inner.Bottom-gap);
+            }
             yield return new(source.Left,source.Bottom-gap-h,source.Left+w,source.Bottom-gap);
             yield return new(source.Left,source.Top+gap,source.Left+w,source.Top+gap+h);
             yield return new(source.Right+gap,source.Top-h,source.Right+gap+w,source.Top);
@@ -182,6 +215,16 @@ internal static class BilingualGroupLayout
             yield return new(source.Center.X-w/2,source.Bottom-gap-h,source.Center.X+w/2,source.Bottom-gap);
             yield return new(source.Left-height,source.Bottom-gap-h,source.Left-height+w,source.Bottom-gap);
             yield return new(source.Left+height,source.Bottom-gap-h,source.Left+height+w,source.Bottom-gap);
+            yield return new(allowed.Left+gap,source.Bottom-gap-h,allowed.Left+gap+w,source.Bottom-gap);
+            yield return new(allowed.Right-gap-w,source.Bottom-gap-h,allowed.Right-gap,source.Bottom-gap);
+            yield return new(source.Left,allowed.Bottom+gap,source.Left+w,allowed.Bottom+gap+h);
+            yield return new(source.Center.X-w/2,allowed.Bottom+gap,source.Center.X+w/2,allowed.Bottom+gap+h);
+            yield return new(allowed.Left+gap,allowed.Bottom+gap,allowed.Left+gap+w,allowed.Bottom+gap+h);
+            yield return new(allowed.Right-gap-w,allowed.Bottom+gap,allowed.Right-gap,allowed.Bottom+gap+h);
+            yield return new(source.Right+gap,allowed.Top-gap-h,source.Right+gap+w,allowed.Top-gap);
+            yield return new(source.Right+gap,allowed.Bottom+gap,source.Right+gap+w,allowed.Bottom+gap+h);
+            yield return new(source.Left-gap-w,allowed.Top-gap-h,source.Left-gap,allowed.Top-gap);
+            yield return new(source.Left-gap-w,allowed.Bottom+gap,source.Left-gap,allowed.Bottom+gap+h);
         }
     }
     private static Rect2 Point(Point2 p)=>new(p.X,p.Y,p.X,p.Y);

@@ -341,6 +341,9 @@ var tests = new (string Name, Action Run)[]
     ,("fragmented_narrative_detector_finds_split_prose", Tests.FragmentedNarrativeDetectorFindsSplitProse)
     ,("narrative_detector_finds_continuous_single_object_prose_column", Tests.NarrativeDetectorFindsContinuousSingleObjectProseColumn)
     ,("fragmented_narrative_detector_rejects_title_block_grid", Tests.FragmentedNarrativeDetectorRejectsTitleBlockGrid)
+    ,("bilingual_group_layout_uses_authoritative_narrative_groups", Tests.BilingualGroupLayoutUsesAuthoritativeNarrativeGroups)
+    ,("bilingual_group_layout_searches_frame_aligned_panel_space", Tests.BilingualGroupLayoutSearchesFrameAlignedPanelSpace)
+    ,("bilingual_note_panel_may_use_clear_space_beyond_inner_frame", Tests.BilingualNotePanelMayUseClearSpaceBeyondInnerFrame)
     ,("fragmented_narrative_region_expands_to_short_rows_in_the_same_column", Tests.FragmentedNarrativeRegionExpandsToShortRowsInTheSameColumn)
     ,("logical_text_segments_stop_at_source_obstacle_gaps", Tests.LogicalTextSegmentsStopAtSourceObstacleGaps)
     ,("fragmented_narrative_table_row_filter_preserves_prose_and_skips_distributed_cells", Tests.FragmentedNarrativeTableRowFilterPreservesProseAndSkipsDistributedCells)
@@ -841,6 +844,72 @@ internal static class Tests
         AssertEx.Equal(
             0,
             FragmentedNarrativeDetector.DetectGroups(cells, medianTextHeight: 3).Length);
+    }
+
+    public static void BilingualGroupLayoutUsesAuthoritativeNarrativeGroups()
+    {
+        string root = Directory.GetCurrentDirectory();
+        string source = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "cad",
+            "CadTranslation.AutoCAD2025",
+            "BilingualGroupLayout.cs"));
+
+        AssertEx.True(source.Contains(
+            "AuthoritativeNarrativeSelector.SelectPanelGroups",
+            StringComparison.Ordinal));
+    }
+
+    public static void BilingualGroupLayoutSearchesFrameAlignedPanelSpace()
+    {
+        string root = Directory.GetCurrentDirectory();
+        string source = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "cad",
+            "CadTranslation.AutoCAD2025",
+            "BilingualGroupLayout.cs"));
+
+        AssertEx.True(source.Contains(
+            "Destinations(group.Source,w,total,sourceHeight,allowed,frame?.Bounds)",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "frame?.Bounds",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "inner.Top+gap",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "allowed.Top-gap-h",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "new(source.Left,allowed.Bottom+gap",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "new(allowed.Right-gap-w,allowed.Bottom+gap",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "new(allowed.Left+gap,source.Bottom-gap-h",
+            StringComparison.Ordinal));
+    }
+
+    public static void BilingualNotePanelMayUseClearSpaceBeyondInnerFrame()
+    {
+        string root = Directory.GetCurrentDirectory();
+        string source = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "cad",
+            "CadTranslation.AutoCAD2025",
+            "BilingualGroupLayout.cs"));
+
+        AssertEx.True(source.Contains(
+            "Union(new[]{frame.Bounds,expanded})",
+            StringComparison.Ordinal));
+        AssertEx.True(source.Contains(
+            "sourceHeight*60",
+            StringComparison.Ordinal));
     }
 
     public static void FragmentedNarrativeRegionExpandsToShortRowsInTheSameColumn()
