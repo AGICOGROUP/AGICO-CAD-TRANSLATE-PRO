@@ -52,7 +52,28 @@ def autocad_release(autocad_root: Path) -> str:
 def runtime_plugin_dir(autocad_root: Path) -> Path:
     if os.environ.get("CAD_TRANSLATE_PLUGIN_DIR"):
         return absolute(os.environ["CAD_TRANSLATE_PLUGIN_DIR"])
-    return AUTOCAD_2027_PLUGIN_DIR if autocad_release(autocad_root) == "R26.0" else AUTOCAD_2025_PLUGIN_DIR
+    if autocad_release(autocad_root) == "R26.0":
+        return AUTOCAD_2027_PLUGIN_DIR  # Separately built .NET 10 runtime.
+    # Select the package shipped with this checkout, never a stale global DLL.
+    fingerprints = ''.join(sha256(PLUGIN_DIR / name) for name in PLUGIN_FILES)
+    version = hashlib.sha256(fingerprints.encode()).hexdigest()[:20]
+    return AUTOCAD_2025_PLUGIN_DIR / ('package-' + version)
+
+def ensure_runtime_plugin(autocad_root: Path) -> Path:
+    directory = runtime_plugin_dir(autocad_root)
+    if not os.environ.get("CAD_TRANSLATE_PLUGIN_DIR") and autocad_release(autocad_root) == "R25.0":
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in (*PLUGIN_FILES, 'CadTranslation.AutoCAD2025.deps.json'):
+            source, target = PLUGIN_DIR / name, directory / name
+            if name not in PLUGIN_FILES and not source.is_file():
+                continue
+            if not target.is_file() or sha256(target) != sha256(source):
+                shutil.copy2(source, target)
+            if sha256(target) != sha256(source):
+                raise RuntimeError('Runtime deployment hash mismatch: ' + name)
+    if any(not (directory / name).is_file() for name in PLUGIN_FILES):
+        raise RuntimeError('Incomplete CAD runtime: ' + str(directory))
+    return directory
 
 def profile(release: str = "R25.0") -> dict[str, object]:
     if release not in {"R25.0", "R26.0"}:
@@ -570,6 +591,7 @@ def verify_export_seal(job: Path, config: dict[str, object]) -> None:
 def require_ready(source: Path, autocad_root: Path) -> dict[str, object]:
     if "windowsapps" in str(Path(sys.executable).resolve()).lower():
         raise RuntimeError("Refusing WindowsApps Python alias; use real CPython.")
+    ensure_runtime_plugin(autocad_root)
     report = doctor(source, autocad_root)
     if report["status"] != "ready": raise RuntimeError("AutoCAD preflight blocked: " + json.dumps(report, ensure_ascii=False))
     return report
@@ -614,7 +636,7 @@ def run_once(
     if result_file.exists():
         raise FileExistsError("Stage already attempted; create a fresh job instead of accepting stale results.")
     started = time.monotonic()
-    plugin = (runtime_plugin_dir(autocad_root) / PLUGIN_FILES[0]).resolve(strict=True)
+    plugin = (ensure_runtime_plugin(autocad_root) / PLUGIN_FILES[0]).resolve(strict=True)
     if any(ch in str(plugin) + str(working) for ch in ('\r', '\n', '"')): raise ValueError("Unsafe AutoCAD path")
     profile_name = str(profile(autocad_release(autocad_root))["name"])
     attempt = operation if config_path.stem == f"{operation}-job" else config_path.stem

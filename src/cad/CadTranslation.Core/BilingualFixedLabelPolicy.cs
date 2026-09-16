@@ -20,7 +20,13 @@ public sealed record BilingualFixedLabelSelection(
 public static partial class BilingualFixedLabelPolicy
 {
     public static bool ContainsEmbeddedEnglish(string source) =>
-        TryKeepEmbeddedEnglish(source, out _);
+        IsDrawingNumberPair(source) || TryKeepEmbeddedEnglish(source, out _);
+
+    private static bool IsDrawingNumberPair(string source)
+    {
+        string visible = Regex.Replace(source, @"\\[A-Za-z][^;\\]*;", "").Replace(@"\P", " ");
+        return Regex.Replace(visible, @"[\s.{}]", "").Equals("图号DWGNO", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static BilingualFixedLabelSelection Select(
         IReadOnlyList<BilingualFixedLabelSample> samples)

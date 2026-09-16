@@ -21,7 +21,8 @@ def inline_candidates(records):
                  sourceText=visible_source(r)) for r in records
             if r.get("handle") and HAN.search(visible_source(r))
             and exchange_has_english(r)
-            and re.search(r"(?<![A-Za-z0-9_.-])[A-Za-z]{4,}(?![A-Za-z0-9_.-])", visible_source(r))]
+            and (re.search(r"(?<![A-Za-z0-9_.-])[A-Za-z]{4,}(?![A-Za-z0-9_.-])", visible_source(r))
+                 or re.sub(r"[\s.]", "", visible_source(r)).upper() == "图号DWGNO")]
 
 def enabled(job):
     path = Path(job) / "config/export-job.json"

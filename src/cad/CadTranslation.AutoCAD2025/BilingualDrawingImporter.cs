@@ -184,9 +184,13 @@ internal static class BilingualDrawingImporter
                             text.Source.Bounds, text.Source.OriginalTextHeight);
                     }).ToArray());
                 progress.Stage = "copy-bilingual-tables";
-                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, access);
+                var tableSlots = new Dictionary<string,BilingualGroupLayout.Slot>();
+                var tableIds = new HashSet<string>();
+                var blockedTables = new HashSet<string>();
+                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, tableSlots, tableIds, blockedTables, access);
                 progress.Stage = "plan-table-slots";
-                var tableSlots = BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions);
+                foreach(var slot in BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !tableIds.Contains(i.Manifest.RecordId) && !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions))
+                    tableSlots[slot.Key]=slot.Value;
 
                 progress.Stage = "project-bilingual-boundaries";
                 ProjectNearbyBoundaries(definitions, baseline, inputs);
@@ -239,6 +243,13 @@ internal static class BilingualDrawingImporter
                         continue;
                     }
 
+                    if(blockedTables.Contains(row.RecordId))
+                    {
+                        unresolved.Add(row.RecordId);
+                        unresolvedDetails.Add(new {row.RecordId,row.Handle,source.Source,
+                            reason="table-copy-unresolved",details="See bilingual-table-layout.json; keep the table grouped for local repair."});
+                        continue;
+                    }
                     var owner = OwningBlock(tx, original, access);
                     if (owner is null || owner.IsFromExternalReference) { unresolved.Add(row.RecordId); continue; }
                     using var added = new MText();
@@ -269,6 +280,12 @@ internal static class BilingualDrawingImporter
                         placed = slot.Bounds.Contains(bounds, 1e-5);
                     }
                     if (placed) scale = slot.Height / source.Source.OriginalTextHeight;
+                    if(inTable && !placed && slot.Strategy=="table-inline-right")
+                    {
+                        unresolved.Add(row.RecordId);
+                        unresolvedDetails.Add(new {row.RecordId,row.Handle,reason="table-inline-measurement-changed",slot.Bounds});
+                        continue;
+                    }
                     var placementTrace = new BilingualPlacementTrace();
                     if (!placed && !Place(added, contents, source, definition, occupied[source.DefinitionName], row.Geometry.InsertionPoint.Z, out bounds, out scale, placementTrace))
                     { unresolved.Add(row.RecordId); unresolvedDetails.Add(new { row.RecordId, row.Handle, source.Source,

@@ -56,8 +56,9 @@ internal static class BilingualGroupLayout
                 var rowCount = cells.Select(c => Math.Round(c.Center.Y,3)).Distinct().Count();
                 if (requests.Length < 3 || rowCount < 3) continue;
                 // Signature/company panels are not reading tables.
-                string labels = string.Join(" ",members.Where(t=>byId.ContainsKey(t.RecordId)).Select(t=>byId[t.RecordId].Manifest.RawText));
-                if (System.Text.RegularExpressions.Regex.IsMatch(labels,"项目经理|批准|审核|校核|会签|Approved|Checked|Reviewed",System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
+                var labels = members.Where(t=>byId.ContainsKey(t.RecordId)).Select(t=>sourcePlain[t.RecordId]).ToArray();
+                if (BilingualTitlePanel.IsTitlePanel(labels) || System.Text.RegularExpressions.Regex.IsMatch(
+                    string.Join(" ", labels),"项目经理|批准|审核|校核|会签|Approved|Checked|Reviewed",System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
                 groups.Add((requests,tableBox,"table-aligned-block"));
             }
 

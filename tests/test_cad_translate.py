@@ -736,8 +736,9 @@ class CadTranslateDryTests(unittest.TestCase):
         )
         self.assertEqual(
             Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows"),
-            directory,
+            directory.parent,
         )
+        self.assertTrue(directory.name.startswith('package-'))
 
     def test_doctor_is_read_only_and_reports_missing_components(self):
         with tempfile.TemporaryDirectory() as directory:

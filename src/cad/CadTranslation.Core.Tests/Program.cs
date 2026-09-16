@@ -3,6 +3,44 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("title_panels_exclude_spaced_signature_labels_from_schedule_grouping", () => {
+        AssertEx.True(BilingualTitlePanel.IsTitlePanel(["审  定", "设  总", "校  对", "制  图"]));
+        AssertEx.True(!BilingualTitlePanel.IsTitlePanel(["设备名称", "型号", "数量", "审核设备"]));
+        AssertEx.True(BilingualFixedLabelPolicy.ContainsEmbeddedEnglish(@"{\fSimSun;图}{\fArial;号}\P{\fArial;DWG.}\PNo."));
+        AssertEx.True(!BilingualFixedLabelPolicy.ContainsEmbeddedEnglish("图号 DWG"));
+    }),
+    ("roomy_table_cells_use_same_row_suffix_with_real_clearance", () => {
+        var cell=new Rect2(0,0,100,10); var source=new Rect2(2,3,20,7);
+        var slot=BilingualTablePlacement.AfterSource(cell,source,40,4,4,[source]);
+        AssertEx.True(slot is not null && slot.Value.Left>source.Right && slot.Value.Center.Y==source.Center.Y);
+        AssertEx.True(BilingualTablePlacement.AfterSource(cell,source,85,4,4,[source]) is null);
+        AssertEx.True(BilingualTablePlacement.AfterSource(cell,source,40,4,4,[source,new Rect2(35,0,50,10)]) is null);
+    }),
+    ("table_copies_have_exactly_four_adjacent_unscaled_options", () => {
+        var table=new Rect2(10,20,110,70); var candidates=BilingualTablePlacement.AdjacentCopies(table,2);
+        AssertEx.Equal(4,candidates.Length);
+        AssertEx.True(candidates.All(c=>c.Width==100 && c.Height==50 && Math.Abs(BilingualLocalPlacement.Gap(c,table)-2)<1e-6));
+        AssertEx.True(candidates.All(c=>c.Left==table.Left || c.Bottom==table.Bottom));
+    }),
+    ("table_partition_separates_schedule_from_merged_title_panel", () => {
+        Rect2[] title=[new(0,0,30,8),new(30,0,100,8),new(0,8,20,20),new(20,8,100,20)];
+        var regular=Enumerable.Range(0,4).SelectMany(i=>new[]{new Rect2(0,20+i*10,10,30+i*10),new Rect2(10,20+i*10,100,30+i*10)}).ToArray();
+        var groups=BilingualTableLayout.TranslationGroups(title.Concat(regular).Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[]);
+        AssertEx.Equal(2,groups.Count);
+        AssertEx.True(groups.Any(g=>g.Length==4 && g.ToHashSet().SetEquals(title)));
+        AssertEx.True(groups.Any(g=>g.Length==8 && g.ToHashSet().SetEquals(regular)));
+    }),
+    ("table_partition_does_not_cut_through_vertical_merged_cells", () => {
+        Rect2[] cells=[new(0,0,20,40),new(20,0,100,10),new(20,10,100,20),new(20,20,100,30),new(20,30,100,40)];
+        var groups=BilingualTableLayout.TranslationGroups(cells.Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[]);
+        AssertEx.Equal(1,groups.Count); AssertEx.Equal(5,groups[0].Length);
+    }),
+    ("table_partition_keeps_extra_row_in_two_sided_equipment_list", () => {
+        var cells=Enumerable.Range(0,3).SelectMany(i=>new[]{new Rect2(0,i*10,10,i*10+10),new Rect2(10,i*10,50,i*10+10),
+            new Rect2(50,i*10,60,i*10+10),new Rect2(60,i*10,100,i*10+10)}).Concat([new Rect2(50,30,60,40),new Rect2(60,30,100,40)]);
+        var groups=BilingualTableLayout.TranslationGroups(cells.Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[]);
+        AssertEx.Equal(1,groups.Count); AssertEx.Equal(14,groups[0].Length);
+    }),
     ("bilingual_candidate_budget_is_applied_after_geometry_clearance", () => {
         var source=new Rect2(0,0,10,3);
         var hints=Enumerable.Range(0,40).Select(i=>new Rect2(i*.25,-15,i*.25,15)).ToArray();

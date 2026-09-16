@@ -4,7 +4,7 @@ using CadTranslation.Core;
 
 namespace CadTranslation.AutoCAD2025;
 
-// Bilingual-only: translate independent copies; source entities are never opened for write.
+// Bilingual-only: prefer readable suffixes in roomy cells; otherwise copy the full grid nearby.
 internal static class BilingualTableCopy
 {
     internal sealed record CopyReceipt(string SourceHandle, string TargetHandle, double Dx, double Dy, string? TargetText, Rect2 Table);
@@ -12,11 +12,13 @@ internal static class BilingualTableCopy
     internal static HashSet<string> Apply(Database db, Transaction tx, CadLayoutBaseline baseline,
         LayoutWriteInput[] inputs, Dictionary<string, List<Rect2>> occupied, string language,
         List<BilingualDrawingImporter.Pair> pairs, List<CopyReceipt> receipts, List<object> decisions,
+        Dictionary<string, BilingualGroupLayout.Slot> inlineSlots, HashSet<string> tableIds, HashSet<string> blocked,
         CadObjectAccess? access = null)
     {
         access ??= new CadObjectAccess(db, tx);
         var requiredIds = inputs.Select(i => i.ObjectId).ToHashSet();
         var handled = new HashSet<string>();
+        var byId = inputs.ToDictionary(i => i.Manifest.RecordId);
         var changed = inputs.Where(i => BilingualDrawingImporter.Plain(i.RestoredText) != BilingualDrawingImporter.Plain(i.Manifest.RawText))
             .ToDictionary(i => i.Manifest.RecordId);
         foreach (var definition in baseline.Definitions)
@@ -44,30 +46,68 @@ internal static class BilingualTableCopy
             // Definitions instantiated multiple times need instance-specific placement, not one shared copy.
             if (!definition.Name.StartsWith("*Model_Space", StringComparison.OrdinalIgnoreCase) &&
                 !definition.Name.StartsWith("*Paper_Space", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var group in BilingualTableLayout.CompleteGroups(definition.Regions,definition.BoundarySegments))
+            foreach (var cells in BilingualTableLayout.TranslationGroups(definition.Regions,definition.BoundarySegments))
             {
-                // Select the repeated body-row height. This excludes adjacent company/signature frames.
-                var band = group.GroupBy(c => Math.Round(c.Height, 3)).OrderByDescending(g => g.Count()).First();
-                var cells = band.ToArray();
-                if (cells.Select(c => Math.Round(c.Center.Y, 3)).Distinct().Count() < 3 ||
-                    cells.Select(c => Math.Round(c.Left, 3)).Distinct().Count() < 2) continue;
+                if (cells.Length < 3 || cells.Select(c => Math.Round(c.Center.Y, 3)).Distinct().Count() < 2) continue;
                 var table = new Rect2(cells.Min(c => c.Left), cells.Min(c => c.Bottom), cells.Max(c => c.Right), cells.Max(c => c.Top));
-                var sources = definition.Texts.Where(t => table.Contains(t.Source.Bounds)).ToArray();
+                var sources = definition.Texts.Where(t => byId.ContainsKey(t.RecordId) &&
+                    cells.Any(c => c.Contains(new Rect2(t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y,t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y)))).ToArray();
                 var requests = sources.Where(t => changed.ContainsKey(t.RecordId) && !handled.Contains(t.RecordId)).ToArray();
-                if (requests.Length < 2) continue;
-                string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(value,@"[\s\p{P}]+","").ToUpperInvariant();
-                var visibleSources = sources.Select(t => Normalize(BilingualDrawingImporter.Plain(inputs.First(i => i.Manifest.RecordId == t.RecordId).Manifest.RawText))).ToArray();
-                if (requests.Any(t => visibleSources.Any(s => s.Contains(Normalize(BilingualDrawingImporter.Plain(changed[t.RecordId].RestoredText)),StringComparison.Ordinal))))
-                { decisions.Add(new { table, strategy="cell-local", reason="existing-bilingual-content-reuse" }); continue; }
-                string sourceText = string.Join(" ", sources.Select(t => BilingualDrawingImporter.Plain(inputs.First(i => i.Manifest.RecordId == t.RecordId).Manifest.RawText)));
-                // Independent schedules have explicit column headings; title blocks do not qualify.
-                if (!System.Text.RegularExpressions.Regex.IsMatch(sourceText, "名称|规格|数量|材质|技术性能|技术参数|Name|Specification|Quantity|Material|Technical|Capacity|Cantidad|Descripción", System.Text.RegularExpressions.RegexOptions.IgnoreCase)) continue;
-                bool multiColumn = requests.GroupBy(t => cells.Where(c => c.Contains(t.Source.Bounds)).Select(c => Math.Round(c.Center.Y, 3)).FirstOrDefault())
-                    .Any(g => g.Count() > 1);
-                // Number + description/value is also a table, even when only one cell per row needs translation.
-                if (!multiColumn && requests.Length < 3) continue;
+                if (BilingualTitlePanel.IsTitlePanel(sources.Select(t => BilingualDrawingImporter.Plain(byId[t.RecordId].Manifest.RawText))))
+                    continue; // Keep title fields paired locally; do not copy or collect them as a schedule.
+                if (requests.Length == 0) continue;
+                Rect2 Cell(CadLayoutText t) => cells.Where(c => c.Contains(new Rect2(t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y,t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y)))
+                    .OrderBy(c => c.Area).First();
+                var reuse = new Dictionary<string,CadLayoutText>();
+                foreach(var t in requests)
+                {
+                    string target=BilingualDrawingImporter.Plain(changed[t.RecordId].RestoredText);
+                    var neighbors=sources.Where(o=>o.RecordId!=t.RecordId && Cell(o)==Cell(t) &&
+                        BilingualLabelEquivalence.MatchesNeighbor(byId[t.RecordId].Manifest.RawText,target,
+                            BilingualDrawingImporter.Plain(byId[o.RecordId].Manifest.RawText))).ToArray();
+                    if(neighbors.Length==1) reuse[t.RecordId]=neighbors[0];
+                }
+                var pending=requests.Where(t=>!reuse.ContainsKey(t.RecordId) &&
+                    !(language.StartsWith("en",StringComparison.OrdinalIgnoreCase) && BilingualFixedLabelPolicy.ContainsEmbeddedEnglish(byId[t.RecordId].Manifest.RawText))).ToArray();
+                foreach(var t in sources) tableIds.Add(t.RecordId);
+                var proposed=new Dictionary<string,BilingualGroupLayout.Slot>();
+                var obstacles=new List<Rect2>(occupied[definition.Name]);
+                foreach(var t in pending)
+                {
+                    if(Math.Abs(byId[t.RecordId].Manifest.Geometry.RotationRadians)>1e-6) break;
+                    bool fitsInline=false;
+                    foreach(double scale in new[]{1.0,.85,.7})
+                    {
+                        using var probe=new MText(); probe.SetDatabaseDefaults(db); probe.Attachment=AttachmentPoint.TopLeft;
+                        probe.TextStyleId=db.Textstyle; probe.TextHeight=t.Source.OriginalTextHeight*scale; probe.Width=0;
+                        string target=BilingualDrawingImporter.Plain(changed[t.RecordId].RestoredText);
+                        probe.Contents=BilingualGroupLayout.Contents(target,language);
+                        var fp=BilingualPlacementChecks.Footprint(probe);
+                        var candidate=BilingualTablePlacement.AfterSource(Cell(t),t.Source.Bounds,fp.Width,fp.Height,t.Source.OriginalTextHeight,obstacles);
+                        if(candidate is not Rect2 slot) continue;
+                        BilingualPlacementChecks.Move(probe,fp,slot.Left,slot.Top,byId[t.RecordId].Manifest.Geometry.InsertionPoint.Z);
+                        if(!BilingualPlacementChecks.Accept(probe,slot,Cell(t),t,definition,obstacles,t.Source.OriginalTextHeight*.12,null,out var actual)) continue;
+                        var reserved=new Rect2(Math.Min(slot.Left,actual.Left),Math.Min(slot.Bottom,actual.Bottom),Math.Max(slot.Right,actual.Right),Math.Max(slot.Top,actual.Top));
+                        proposed[t.RecordId]=new(reserved,probe.TextHeight,0,"table-inline-right",target);
+                        obstacles.Add(reserved); fitsInline=true; break;
+                    }
+                    if(!fitsInline) break;
+                }
+                if(proposed.Count==pending.Length)
+                {
+                    foreach(var p in proposed)
+                    {
+                        inlineSlots[p.Key]=p.Value; occupied[definition.Name].Add(p.Value.Bounds);
+                        foreach(var name in occupied.Keys.Where(n=>n!=definition.Name))
+                            occupied[name].AddRange(InstanceOccupancyProjection.Project(p.Value.Bounds,definition.Name,name,baseline.BlockInstances));
+                    }
+                    decisions.Add(new{table,strategy="table-inline-right",recordIds=pending.Select(t=>t.RecordId).ToArray(),reused=reuse.Count});
+                    continue;
+                }
+                // A failed copy stays a grouped repair; it must not scatter into tiny labels.
+                foreach(var t in pending) blocked.Add(t.RecordId);
                 var owner = access.Read<BlockTableRecord>(db.GetObjectId(false, new Handle(Convert.ToInt64(definition.Handle, 16)), 0), "table-owner", definition.Name);
-                if (owner is null) { decisions.Add(new { table, strategy="cell-local", reason="unreadable-table-owner" }); continue; }
+                if (owner is null) { decisions.Add(new { table, strategy="table-copy-unresolved", reason="unreadable-table-owner" }); continue; }
                 var members = new List<Entity>();
                 bool unsupported = false;
                 foreach (ObjectId id in owner)
@@ -79,13 +119,12 @@ internal static class BilingualTableCopy
                     if (entity is not Line and not MText and not DBText) { unsupported = true; break; }
                     members.Add(entity);
                 }
-                if (unsupported || !members.OfType<Line>().Any() || requests.Any(t => Math.Abs(changed[t.RecordId].Manifest.Geometry.RotationRadians) > 1e-6))
-                { decisions.Add(new { table, strategy = "cell-local", reason = "unsupported-table-members-or-rotation" }); continue; }
+                if (unsupported || !members.OfType<Line>().Any() || requests.Any(t => !members.Any(m=>m.ObjectId==t.ObjectId) || Math.Abs(changed[t.RecordId].Manifest.Geometry.RotationRadians) > 1e-6))
+                { decisions.Add(new { table, strategy = "table-copy-unresolved", reason = "unsupported-table-members-or-rotation" }); continue; }
 
-                double gap = band.Key * .5;
-                var offsets = Enumerable.Range(0,4).SelectMany(side => new[] {1,2,4,8}.Select(n => side switch {
-                    0 => new Vector3d(-table.Width-gap*n,0,0), 1 => new Vector3d(table.Width+gap*n,0,0),
-                    2 => new Vector3d(0,table.Height+gap*n,0), _ => new Vector3d(0,-table.Height-gap*n,0) })).ToArray();
+                double gap = cells.Select(c=>c.Height).Order().ElementAt(cells.Length/2)*.25;
+                var offsets = BilingualTablePlacement.AdjacentCopies(table,gap)
+                    .Select(b=>new Vector3d(b.Left-table.Left,b.Bottom-table.Bottom,0)).ToArray();
                 var detectedFrames = DetectFrames(definition.BoundarySegments, table);
                 var frames = definition.Regions.Concat(detectedFrames.Select(b => new LayoutRegion("table-copy-frame",LayoutRegionKind.ClosedFrame,b))).Where(r => r.Bounds.Contains(table) && r.Bounds.Area > table.Area * 1.5)
                     .OrderBy(r => r.Bounds.Area).ToArray();
@@ -93,14 +132,13 @@ internal static class BilingualTableCopy
                 foreach (var offset in offsets)
                 {
                     Rect2 destination = Move(table, offset);
-                    if (!frames.Any(f => f.Bounds.Contains(destination))) continue;
                     if (occupied[definition.Name].Any(b => Overlap(destination, b, gap*.1))) continue;
                     if (definition.BoundarySegments.Any(s => Overlap(destination, new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY), gap*.1))) continue;
                     if (definition.ProtectedGeometry.Any(g => !g.Bounds.Contains(destination) && Overlap(destination,g.Bounds,gap*.1))) continue;
                     selected = offset; break;
                 }
                 if (selected is not { } delta)
-                { decisions.Add(new { table, strategy = "cell-local", reason = "no-full-size-space-inside-frame", frames = frames.Select(f => f.Bounds).ToArray(), candidates = offsets.Select(o => new { destination = Move(table,o), text = occupied[definition.Name].Count(b => Overlap(Move(table,o),b,gap*.1)), lines = definition.BoundarySegments.Where(s => Overlap(Move(table,o),new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY),gap*.1)).ToArray(), geometry = definition.ProtectedGeometry.Count(g => !g.Bounds.Contains(Move(table,o)) && Overlap(Move(table,o),g.Bounds,gap*.1)) }).ToArray() }); continue; }
+                { decisions.Add(new { table, strategy = "table-copy-unresolved", reason = "no-immediately-adjacent-space", frames = frames.Select(f => f.Bounds).ToArray(), candidates = offsets.Select(o => new { destination = Move(table,o), text = occupied[definition.Name].Count(b => Overlap(Move(table,o),b,gap*.1)), lines = definition.BoundarySegments.Where(s => Overlap(Move(table,o),new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY),gap*.1)).ToArray(), geometry = definition.ProtectedGeometry.Count(g => !g.Bounds.Contains(Move(table,o)) && Overlap(Move(table,o),g.Bounds,gap*.1)) }).ToArray() }); continue; }
 
                 var staged = new List<(Entity Source, Entity Clone, CadLayoutText? Text, string? Target)>();
                 bool fits = true;
@@ -108,7 +146,11 @@ internal static class BilingualTableCopy
                 object? failedDetails = null;
                 foreach (var member in members)
                 {
+                    // In a target-only copy, one existing equivalent target replaces the paired source label.
+                    if(sources.Any(t=>t.ObjectId==member.ObjectId && reuse.ContainsKey(t.RecordId))) continue;
                     var text = sources.FirstOrDefault(t => t.ObjectId == member.ObjectId && changed.ContainsKey(t.RecordId));
+                    var alias=reuse.FirstOrDefault(p=>p.Value.ObjectId==member.ObjectId);
+                    if(alias.Key is not null) text=sources.First(t=>t.RecordId==alias.Key);
                     Entity clone = (Entity)member.Clone();
                     if (member is Line originalLine && clone is Line clonedLine && Clip(originalLine,table,out var start,out var end))
                     { clonedLine.StartPoint=start; clonedLine.EndPoint=end; }
@@ -116,8 +158,7 @@ internal static class BilingualTableCopy
                     if (text is not null)
                     {
                         target = BilingualDrawingImporter.Plain(changed[text.RecordId].RestoredText);
-                        var center = text.Source.Bounds.Center;
-                        var cell = GridCellDetector.DetectContaining(definition.BoundarySegments,new Rect2(center.X,center.Y,center.X,center.Y),1e-3)?.Bounds ?? default;
+                        var cell = Cell(text);
                         if (cell.Area <= 0 || !Fit(clone, target, cell, language)) { failedHandle=member.Handle.ToString(); failedDetails=new { cell, source=text.Source.Bounds, candidate=Bounds(clone), target }; clone.Dispose(); fits = false; break; }
                     }
                     clone.TransformBy(Matrix3d.Displacement(delta));
@@ -126,7 +167,7 @@ internal static class BilingualTableCopy
                 if (!fits)
                 {
                     foreach (var item in staged) item.Clone.Dispose();
-                    decisions.Add(new { table, strategy = "cell-local", reason = "copy-text-does-not-fit", failedHandle, failedDetails }); continue;
+                    decisions.Add(new { table, strategy = "table-copy-unresolved", reason = "copy-text-does-not-fit", failedHandle, failedDetails }); continue;
                 }
                 owner.UpgradeOpen();
                 foreach (var item in staged)
@@ -136,6 +177,7 @@ internal static class BilingualTableCopy
                     if (item.Text is { } t && item.Target is { } target)
                     {
                         handled.Add(t.RecordId);
+                        blocked.Remove(t.RecordId);
                         var b = Bounds(item.Clone)!.Value;
                         double height = item.Clone is MText mt ? mt.TextHeight : ((DBText)item.Clone).Height;
                         pairs.Add(new(t.RecordId,t.EntityHandle,item.Clone.Handle.ToString(),target,"added",definition.Name,b,height/t.Source.OriginalTextHeight,"table-copy"));
@@ -149,7 +191,9 @@ internal static class BilingualTableCopy
                 occupied[definition.Name].Add(envelope);
                 foreach (var name in occupied.Keys.Where(n => n != definition.Name))
                     occupied[name].AddRange(InstanceOccupancyProjection.Project(envelope,definition.Name,name,baseline.BlockInstances));
-                decisions.Add(new { table, destination = envelope, strategy = "table-copy", reason = "multi-column-schedule", copiedEntities = staged.Count, translatedCells = staged.Count(s => s.Target != null) });
+                decisions.Add(new { table, destination = envelope, strategy = "table-copy", reason = "insufficient-cell-space", gap,
+                    outsideContainingFrame=frames.Length>0 && !frames.Any(f=>f.Bounds.Contains(envelope)),
+                    copiedEntities = staged.Count, translatedCells = staged.Count(s => s.Target != null) });
             }
         }
         return handled;
