@@ -45,7 +45,7 @@ public class TablePlacementTests
             foreach(var c in cells)
             {
                 bool isTitle=c.Top<=25, index=!isTitle && c.Left==0;
-                string raw=index?"1":isTitle?"图名":"水泵",target=index?"1":isTitle?"Drawing Title":"Water Pump";
+                string raw=index?"1":isTitle?(c.Left==0?"设计":"审核"):"水泵",target=index?"1":isTitle?(c.Left==0?"Designed by":"Reviewed by"):"Water Pump";
                 var text=new MText();text.SetDatabaseDefaults(db);text.TextHeight=2;text.Width=0;
                 text.Attachment=AttachmentPoint.TopLeft;text.Contents=@"\FSimSun;"+raw;
                 text.Location=new Point3d(isTitle?c.Right-6:c.Left+1,c.Center.Y+1,0);
@@ -68,8 +68,8 @@ public class TablePlacementTests
             var handled=BilingualTableCopy.Apply(db,tx,baseline,inputs.ToArray(),occupied,"en",pairs,receipts,decisions,slots,ids,blocked);
             Require(slots.Count==4,"All four roomy description cells must keep a right-hand inline translation: "+JsonSerializer.Serialize(new{slots,decisions,blocked},JsonDefaults.Options));
             Require(slots.All(p=>p.Value.Strategy=="table-inline-right" && p.Value.Bounds.Left>texts.Single(t=>t.RecordId==p.Key).Source.Bounds.Right),"Inline targets must follow their source.");
-            Require(blockAll?blocked.Count==4 && receipts.Count==0:handled.Count==4 && blocked.Count==0 && receipts.Count>4,
-                "The entire irregular title must be copied adjacent or reported blocked, without scattering.");
+            Require(handled.Count==0 && blocked.Count==0 && receipts.Count==0,
+                "Recognized title fields must stay local, not compete with the roomy schedule or copy as another table.");
             foreach(var copy in receipts)
             {
                 Require(copy.Table==new Rect2(0,0,100,25),"The full merged title panel must be copied, not just a repeated row-height subset.");

@@ -14,7 +14,8 @@ internal static class BilingualGroupLayout
 
     internal static Dictionary<string, Slot> Plan(Database db, CadLayoutBaseline baseline,
         LayoutWriteInput[] inputs, Dictionary<string,List<Rect2>> occupied, string language,
-        CadObjectAccess access, List<object> decisions)
+        CadObjectAccess access, List<object> decisions,
+        IReadOnlyDictionary<string,IReadOnlyList<Rect2[]>>? tableGroups = null, HashSet<string>? blocked = null)
     {
         var result = new Dictionary<string,Slot>();
         var byId = inputs.ToDictionary(i => i.Manifest.RecordId);
@@ -40,7 +41,7 @@ internal static class BilingualGroupLayout
             if(!d.Texts.Any(t=>eligible.Contains(t.RecordId))) continue;
             var tableIds = new HashSet<string>();
             var groups = new List<(CadLayoutText[] Rows, Rect2 Source, string Strategy)>();
-            foreach (var cells in BilingualTableLayout.CompleteGroups(d.Regions,d.BoundarySegments))
+            foreach (var cells in tableGroups?.GetValueOrDefault(d.Name) ?? BilingualTableLayout.CompleteGroups(d.Regions,d.BoundarySegments))
             {
                 // A text's box may cross a grid line; its center still identifies its row.
                 var members = d.Texts.Where(t => cells.Any(c => c.Contains(Point(t.Source.Bounds.Center)))).ToArray();
@@ -83,7 +84,7 @@ internal static class BilingualGroupLayout
                     .OrderByDescending(t => t.Source.Bounds.Center.Y)
                     .ThenBy(t => t.Source.Bounds.Left)
                     .ToArray();
-                if (requests.Length < 3) continue;
+                if (requests.Length < 3 || !BilingualReadingGroupPolicy.IsNarrative(requests.Select(t=>sourcePlain[t.RecordId]))) continue;
                 groups.Add((requests, narrative.Region.Bounds, "note-block"));
                 foreach (string id in narrative.MemberIds) narrativeIds.Add(id);
             }
@@ -107,8 +108,9 @@ internal static class BilingualGroupLayout
                     members.Add(b); remaining.RemoveAt(j);
                 }
                 var requests=members.Where(Eligible).OrderByDescending(t=>t.Source.Bounds.Center.Y).ThenBy(t=>t.Source.Bounds.Left).ToArray();
-                bool paragraph=requests.Length==1 && targetPlain[requests[0].RecordId].Length>=100;
-                if(requests.Length>=3 || paragraph) groups.Add((requests,Union(members.Select(t=>t.Source.Bounds)),"note-block"));
+                bool paragraph=requests.Length==1 && sourcePlain[requests[0].RecordId].Length>=100;
+                if(requests.Length>=3 || paragraph) groups.Add((requests,Union(members.Select(t=>t.Source.Bounds)),
+                    paragraph || BilingualReadingGroupPolicy.IsNarrative(requests.Select(t=>sourcePlain[t.RecordId])) ? "note-block" : "legend-rows"));
             }
 
             var frameRegions=d.Regions.Where(r=>r.Kind==LayoutRegionKind.ClosedFrame).ToList();
@@ -121,11 +123,21 @@ internal static class BilingualGroupLayout
                 double sourceHeight=group.Rows.Min(t=>t.Source.OriginalTextHeight);
                 var frame=frameRegions.Where(r=>r.Bounds.Contains(group.Source) && r.Bounds.Area>group.Source.Area*1.1)
                     .OrderBy(r=>r.Bounds.Area).FirstOrDefault();
+                var containingFrames=frameRegions.Where(r=>r.Bounds.Contains(group.Source) && r.Bounds.Area>group.Source.Area*1.1)
+                    .Select(r=>r.Bounds).Distinct().ToArray();
+                if(group.Strategy=="legend-rows")
+                {
+                    PlanLegend(db,baseline,d,group.Rows,group.Source,frame?.Bounds,targetPlain,occupied,language,result,decisions,blocked);
+                    continue;
+                }
                 var expanded=new Rect2(group.Source.Left-sourceHeight*60,group.Source.Bottom-sourceHeight*60,
                     group.Source.Right+sourceHeight*60,group.Source.Top+sourceHeight*60);
                 var allowed=frame is null || group.Strategy=="table-aligned-block"
                     ? frame?.Bounds ?? expanded
                     : Union(new[]{frame.Bounds,expanded});
+                if(frame is not null && group.Strategy=="note-block")
+                    allowed=Union(containingFrames.Select(f=>new Rect2(f.Left-expanded.Width,f.Bottom-expanded.Height,
+                        f.Right+expanded.Width,f.Top+expanded.Height)).Append(allowed));
                 var textObstacles=occupied[d.Name].Where(b=>BilingualDrawingImporter.Intersects(allowed,b,sourceHeight*.2)).ToArray();
                 var display=group.Rows.Select(row=>{
                     if(group.Strategy!="table-aligned-block") return targetPlain[row.RecordId];
@@ -137,6 +149,9 @@ internal static class BilingualGroupLayout
                 }).ToArray();
                 bool placed=false;
                 var rejected=new List<object>();
+                // Exhaust readable in-frame widths before any outside candidate.
+                foreach(bool outside in frame is null ? new[]{false} : new[]{false,true})
+                {
                 foreach(double scale in new[]{.85,.7})
                 {
                     double height=sourceHeight*scale, gap=height*(group.Strategy=="table-aligned-block"?.30:.45);
@@ -150,8 +165,10 @@ internal static class BilingualGroupLayout
                         }
                         double w=sizes.Max(b=>b.Width), total=sizes.Sum(b=>b.Height+gap)-gap;
                         if(w>allowed.Width || total>allowed.Height) continue;
-                        foreach(var destination in Destinations(group.Source,w,total,sourceHeight,allowed,frame?.Bounds))
+                        foreach(var destination in BilingualPanelPlacement.Destinations(group.Source,w,total,sourceHeight,allowed,frame?.Bounds,
+                            frameRegions.Select(r=>r.Bounds).ToArray()))
                         {
+                            if(frame is not null && frame.Bounds.Contains(destination)==outside) continue;
                             var textConflict=textObstacles.Where(b=>BilingualDrawingImporter.Intersects(destination,b,height*.2)).ToArray();
                             var lines=d.BoundarySegments.Where(s=>BilingualDrawingImporter.Crosses(destination,s)).Take(1).ToArray();
                             var geometry=d.ProtectedGeometry.Where(g=>!g.Bounds.Contains(group.Source) && BilingualDrawingImporter.Intersects(destination,g.Bounds,0)).Take(1).ToArray();
@@ -175,14 +192,21 @@ internal static class BilingualGroupLayout
                             occupied[d.Name].Add(destination);
                             foreach(var name in occupied.Keys.Where(n=>n!=d.Name))
                                 occupied[name].AddRange(InstanceOccupancyProjection.Project(destination,d.Name,name,baseline.BlockInstances));
-                            decisions.Add(new{strategy=group.Strategy,source=group.Source,destination,recordIds=group.Rows.Select(t=>t.RecordId).ToArray(),height});
+                            decisions.Add(new{strategy=group.Strategy,source=group.Source,destination,recordIds=group.Rows.Select(t=>t.RecordId).ToArray(),height,
+                                outsideContainingFrame=frame is not null && !containingFrames.Any(f=>f.Contains(destination))});
                             placed=true; break;
                         }
                         if(placed) break;
                     }
                     if(placed) break;
                 }
-                if(!placed) decisions.Add(new{strategy=group.Strategy,source=group.Source,allowed,reason="no-continuous-readable-space",rejected,recordIds=group.Rows.Select(t=>t.RecordId).ToArray()});
+                if(placed) break;
+                }
+                if(!placed)
+                {
+                    blocked?.UnionWith(group.Rows.Select(t=>t.RecordId));
+                    decisions.Add(new{strategy=group.Strategy,source=group.Source,allowed,reason="no-continuous-readable-space",rejected,recordIds=group.Rows.Select(t=>t.RecordId).ToArray()});
+                }
             }
         }
         return result;
@@ -198,36 +222,49 @@ internal static class BilingualGroupLayout
         return text;
     }
 
-    internal static IEnumerable<Rect2> Destinations(Rect2 source,double w,double h,double height,Rect2 allowed,Rect2? innerFrame)
+    private static void PlanLegend(Database db,CadLayoutBaseline baseline,CadDefinitionTopology definition,
+        CadLayoutText[] rows,Rect2 source,Rect2? frame,IReadOnlyDictionary<string,string> targets,
+        Dictionary<string,List<Rect2>> occupied,string language,Dictionary<string,Slot> result,List<object> decisions,HashSet<string>? blocked)
     {
-        foreach(double gap in new[]{height,3*height,6*height,10*height})
+        double h=rows.Min(r=>r.Source.OriginalTextHeight);
+        foreach(double scale in new[]{.85,.7})
         {
-            if(innerFrame is Rect2 inner)
+            var sizes=new List<Rect2>();
+            foreach(var row in rows)
             {
-                yield return new(source.Left,inner.Top+gap,source.Left+w,inner.Top+gap+h);
-                yield return new(source.Left,inner.Bottom-gap-h,source.Left+w,inner.Bottom-gap);
-                yield return new(source.Center.X-w/2,inner.Top+gap,source.Center.X+w/2,inner.Top+gap+h);
-                yield return new(source.Center.X-w/2,inner.Bottom-gap-h,source.Center.X+w/2,inner.Bottom-gap);
+                using var probe=Probe(db,targets[row.RecordId],h*scale,0,language);
+                sizes.Add(BilingualPlacementChecks.Footprint(probe));
             }
-            yield return new(source.Left,source.Bottom-gap-h,source.Left+w,source.Bottom-gap);
-            yield return new(source.Left,source.Top+gap,source.Left+w,source.Top+gap+h);
-            yield return new(source.Right+gap,source.Top-h,source.Right+gap+w,source.Top);
-            yield return new(source.Left-gap-w,source.Top-h,source.Left-gap,source.Top);
-            yield return new(source.Center.X-w/2,source.Bottom-gap-h,source.Center.X+w/2,source.Bottom-gap);
-            yield return new(source.Left-height,source.Bottom-gap-h,source.Left-height+w,source.Bottom-gap);
-            yield return new(source.Left+height,source.Bottom-gap-h,source.Left+height+w,source.Bottom-gap);
-            yield return new(allowed.Left+gap,source.Bottom-gap-h,allowed.Left+gap+w,source.Bottom-gap);
-            yield return new(allowed.Right-gap-w,source.Bottom-gap-h,allowed.Right-gap,source.Bottom-gap);
-            yield return new(source.Left,allowed.Bottom+gap,source.Left+w,allowed.Bottom+gap+h);
-            yield return new(source.Center.X-w/2,allowed.Bottom+gap,source.Center.X+w/2,allowed.Bottom+gap+h);
-            yield return new(allowed.Left+gap,allowed.Bottom+gap,allowed.Left+gap+w,allowed.Bottom+gap+h);
-            yield return new(allowed.Right-gap-w,allowed.Bottom+gap,allowed.Right-gap,allowed.Bottom+gap+h);
-            yield return new(source.Right+gap,allowed.Top-gap-h,source.Right+gap+w,allowed.Top-gap);
-            yield return new(source.Right+gap,allowed.Bottom+gap,source.Right+gap+w,allowed.Bottom+gap+h);
-            yield return new(source.Left-gap-w,allowed.Top-gap-h,source.Left-gap,allowed.Top-gap);
-            yield return new(source.Left-gap-w,allowed.Bottom+gap,source.Left-gap,allowed.Bottom+gap+h);
+            double width=sizes.Max(s=>s.Width),gap=h*.4;
+            // One common column with original row centers, not a reflowed paragraph.
+            foreach(bool right in new[]{true,false})
+            {
+                double left=right?source.Right+gap:source.Left-gap-width;
+                var slots=rows.Select((r,i)=>new Rect2(left,r.Source.Bounds.Center.Y-sizes[i].Height/2,
+                    left+sizes[i].Width,r.Source.Bounds.Center.Y+sizes[i].Height/2)).ToArray();
+                if(slots.Where((s,i)=>frame is Rect2 f && !f.Contains(s) ||
+                    BilingualLocalPlacement.Gap(s,rows[i].Source.Bounds)>h*4).Any()) continue;
+                if(slots.Any(s=>occupied[definition.Name].Any(b=>BilingualDrawingImporter.Intersects(s,b,h*.12)) ||
+                    definition.BoundarySegments.Any(line=>BilingualDrawingImporter.Crosses(s,line)) ||
+                    definition.ProtectedGeometry.Any(g=>!g.Bounds.Contains(source) && BilingualDrawingImporter.Intersects(s,g.Bounds,0)))) continue;
+                if(slots.Where((s,i)=>slots.Take(i).Any(b=>BilingualDrawingImporter.Intersects(s,b,h*.12))).Any()) continue;
+                for(int i=0;i<rows.Length;i++)
+                {
+                    result[rows[i].RecordId]=new(slots[i],h*scale,0,"legend-rows",targets[rows[i].RecordId]);
+                    occupied[definition.Name].Add(slots[i]);
+                    foreach(var name in occupied.Keys.Where(n=>n!=definition.Name))
+                        occupied[name].AddRange(InstanceOccupancyProjection.Project(slots[i],definition.Name,name,baseline.BlockInstances));
+                }
+                decisions.Add(new{strategy="legend-rows",source,destination=Union(slots),recordIds=rows.Select(r=>r.RecordId).ToArray(),height=h*scale});
+                return;
+            }
         }
+        blocked?.UnionWith(rows.Select(r=>r.RecordId));
+        decisions.Add(new{strategy="legend-rows-unresolved",source,reason="no-nearby-aligned-column",recordIds=rows.Select(r=>r.RecordId).ToArray()});
     }
+
+    internal static IEnumerable<Rect2> Destinations(Rect2 source,double w,double h,double height,Rect2 allowed,Rect2? innerFrame)
+        => BilingualPanelPlacement.Destinations(source,w,h,height,allowed,innerFrame);
     private static Rect2 Point(Point2 p)=>new(p.X,p.Y,p.X,p.Y);
     private static Rect2 Union(IEnumerable<Rect2> boxes) {var b=boxes.ToArray();return new(b.Min(x=>x.Left),b.Min(x=>x.Bottom),b.Max(x=>x.Right),b.Max(x=>x.Top));}
     private static bool SegmentsCross(Segment2 a,Segment2 b)

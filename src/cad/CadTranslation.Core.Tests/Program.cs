@@ -3,6 +3,93 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("table_supplement_can_clear_its_containing_frame_without_scaling", () => {
+        var table=new Rect2(60,30,90,60);var frame=new Rect2(0,0,100,100);
+        var copies=BilingualTablePlacement.AdjacentCopySearch(table,2,[frame]);
+        AssertEx.True(copies.Contains(new Rect2(102,30,132,60)));
+        AssertEx.True(copies.All(c=>c.Width==30 && c.Height==30));
+        AssertEx.False(BilingualTablePlacement.AdjacentCopySearch(table,2,[new Rect2(200,0,300,100)])
+            .Any(c=>c.Left==302));
+    }),
+    ("prose_panel_can_clear_the_right_frame_edge_without_crossing_it", () => {
+        var source=new Rect2(61,30,91,60);var frame=new Rect2(0,0,100,100);
+        var candidates=BilingualPanelPlacement.Destinations(source,40,25,2,new Rect2(-100,-100,200,200),frame).ToArray();
+        AssertEx.True(candidates.Contains(new Rect2(102,35,142,60)));
+    }),
+    ("outside_supplement_cannot_occupy_another_sheet_empty_interior", () => {
+        var source=new Rect2(60,30,90,60);var own=new Rect2(0,0,100,100);var other=new Rect2(101,0,201,100);
+        var copies=BilingualTablePlacement.AdjacentCopySearch(source,2,[own,other]);
+        AssertEx.False(copies.Any(c=>BilingualTablePlacement.Overlap(c,other)));
+        var panels=BilingualPanelPlacement.Destinations(source,30,30,2,new Rect2(-200,-200,300,300),own,[own,other]);
+        AssertEx.False(panels.Any(c=>BilingualTablePlacement.Overlap(c,other)));
+    }),
+    ("saved_layout_bounds_survive_json_roundtrip", () => {
+        var before = new Rect2(100, 200, 350, 460);
+        var json = System.Text.Json.JsonSerializer.Serialize(before, JsonDefaults.Options);
+        var after = System.Text.Json.JsonSerializer.Deserialize<Rect2>(json, JsonDefaults.Options);
+        AssertEx.Equal(before, after);
+        AssertEx.True(after.Contains(new Rect2(110,210,340,450)));
+    }),
+    ("short_legend_rows_are_not_narrative_panels", () => {
+        AssertEx.False(BilingualReadingGroupPolicy.IsNarrative(["工艺气体","工艺液体","工艺固体","仪表空气"]));
+        AssertEx.False(BilingualReadingGroupPolicy.IsNarrative(["就地安装的分散仪表，操作员通常不监视", "盘面安装仪表，操作员通常监视", "集中安装仪表，操作员通常监视"]));
+        AssertEx.True(BilingualReadingGroupPolicy.IsNarrative(["1. 基础施工前，应按照设计要求核对全部设备安装尺寸。", "2. 混凝土强度必须满足图纸规定，未经确认不得施工。"]));
+        AssertEx.True(BilingualReadingGroupPolicy.IsNarrative(["F1: 磨辊、磨盘和减速机总重", "F2: 磨辊对磨盘竖直方向的作用力", "T1: 磨辊对磨盘的扭力矩"]));
+    }),
+    ("note_panel_prefers_nearby_inside_space_before_outside_frame", () => {
+        var source=new Rect2(20,40,40,60); var frame=new Rect2(0,0,100,100);
+        var candidates=BilingualPanelPlacement.Destinations(source,30,20,2,new Rect2(-100,-100,200,200),frame).ToArray();
+        AssertEx.True(frame.Contains(candidates[0]));
+        AssertEx.True(BilingualLocalPlacement.Gap(source,candidates[0])<=2.01);
+        AssertEx.True(candidates.Any(c=>!frame.Contains(c) && (c.Bottom>frame.Top || c.Top<frame.Bottom)));
+    }),
+    ("multi_level_header_stays_with_its_entire_table", () => {
+        Rect2[] header = [new(0,40,10,60),new(10,50,100,60),new(10,40,40,50),new(40,40,100,50)];
+        var body = Enumerable.Range(0,4).SelectMany(i => new[]{new Rect2(0,i*10,10,i*10+10),new Rect2(10,i*10,40,i*10+10),new Rect2(40,i*10,100,i*10+10)});
+        var cells = header.Concat(body).ToArray();
+        var groups = BilingualTableLayout.TranslationGroups(cells.Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[]);
+        AssertEx.Equal(1,groups.Count);
+        AssertEx.Equal(16,groups[0].Length);
+    }),
+    ("real_nested_grid_keeps_header_and_fifteen_body_rows_in_one_table", () => {
+        using var data=System.Text.Json.JsonDocument.Parse(File.ReadAllText("tests/fixtures/bilingual/instrument-letter-grid.json"));
+        var root=System.Text.Json.JsonSerializer.Deserialize<Segment2[]>(data.RootElement.GetProperty("rootSegments"),JsonDefaults.Options)!;
+        var nested=System.Text.Json.JsonSerializer.Deserialize<Segment2[]>(data.RootElement.GetProperty("nestedProjectedSegments"),JsonDefaults.Options)!;
+        var segments=root.Concat(nested).ToArray();
+        var regions=GridCellDetector.Detect(segments,.001).Concat([new LayoutRegion("sheet",LayoutRegionKind.TableCell,new Rect2(-10000,-20000,25000,25000))]);
+        var groups=BilingualTableLayout.TranslationGroups(regions,segments);
+        var expected=System.Text.Json.JsonSerializer.Deserialize<Rect2>(data.RootElement.GetProperty("expectedBounds"),JsonDefaults.Options);
+        AssertEx.Equal(1,groups.Count);
+        AssertEx.Equal(0d,Math.Round(groups[0].Min(c=>c.Bottom),3));
+        AssertEx.Equal(Math.Round(expected.Top,3),Math.Round(groups[0].Max(c=>c.Top),3));
+        AssertEx.Equal(18,groups[0].Select(c=>Math.Round(c.Bottom,3)).Distinct().Count());
+    }),
+    ("segmented_grid_is_recovered_without_unrelated_global_ticks", () => {
+        var lines = new List<Segment2>();
+        foreach(double y in new[]{0d,10,20,30,40}) { lines.Add(new(new(0,y),new(30,y))); lines.Add(new(new(30,y),new(100,y))); }
+        foreach(double x in new[]{0d,30,100}) foreach(double y in new[]{0d,10,20,30}) lines.Add(new(new(x,y),new(x,y+10)));
+        lines.Add(new(new(15,100),new(15,120))); lines.Add(new(new(200,15),new(210,15)));
+        var groups = BilingualTableLayout.CompleteGroups([],lines);
+        AssertEx.Equal(1,groups.Count);
+        AssertEx.Equal(8,groups[0].Length);
+        AssertEx.True(groups[0].Contains(new Rect2(30,0,100,10)));
+    }),
+    ("sheet_frame_cannot_connect_two_independent_tables", () => {
+        var cells=new[]{new Rect2(0,0,10,10),new Rect2(0,10,10,20),new Rect2(50,0,60,10),new Rect2(50,10,60,20)};
+        var frame=new Rect2(-10,-10,100,100);
+        var regions=cells.Append(frame).Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c));
+        var groups=BilingualTableLayout.CompleteGroups(regions,[]);
+        AssertEx.Equal(2,groups.Count); AssertEx.True(groups.All(g=>g.Length==2));
+    }),
+    ("short_internal_line_cannot_erase_a_table_row", () => {
+        var lines=new List<Segment2>();
+        foreach(double y in new[]{0d,10,20,30})lines.Add(new(new(0,y),new(100,y)));
+        lines.Add(new(new(0,0),new(0,30)));lines.Add(new(new(100,0),new(100,30)));
+        lines.Add(new(new(45,5),new(55,5)));
+        var groups=BilingualTableLayout.CompleteGroups([],lines);
+        AssertEx.Equal(1,groups.Count);AssertEx.Equal(3,groups[0].Length);
+        AssertEx.True(groups[0].Contains(new Rect2(0,0,100,10)));
+    }),
     ("title_panels_exclude_spaced_signature_labels_from_schedule_grouping", () => {
         AssertEx.True(BilingualTitlePanel.IsTitlePanel(["审  定", "设  总", "校  对", "制  图"]));
         AssertEx.True(!BilingualTitlePanel.IsTitlePanel(["设备名称", "型号", "数量", "审核设备"]));
@@ -22,10 +109,22 @@ var tests = new (string Name, Action Run)[]
         AssertEx.True(candidates.All(c=>c.Width==100 && c.Height==50 && Math.Abs(BilingualLocalPlacement.Gap(c,table)-2)<1e-6));
         AssertEx.True(candidates.All(c=>c.Left==table.Left || c.Bottom==table.Bottom));
     }),
+    ("table_copy_search_stays_on_one_adjacent_side_while_sliding", () => {
+        var table=new Rect2(0,0,100,20); var candidates=BilingualTablePlacement.AdjacentCopySearch(table,5);
+        AssertEx.Equal(20,candidates.Count);
+        foreach(var c in candidates)
+        {
+            bool right=Math.Abs(c.Left-105)<1e-9, left=Math.Abs(c.Right+5)<1e-9;
+            bool above=Math.Abs(c.Bottom-25)<1e-9, below=Math.Abs(c.Top+5)<1e-9;
+            AssertEx.Equal(1,new[]{right,left,above,below}.Count(x=>x));
+            AssertEx.True(c.Width==table.Width && c.Height==table.Height);
+        }
+    }),
     ("table_partition_separates_schedule_from_merged_title_panel", () => {
         Rect2[] title=[new(0,0,30,8),new(30,0,100,8),new(0,8,20,20),new(20,8,100,20)];
         var regular=Enumerable.Range(0,4).SelectMany(i=>new[]{new Rect2(0,20+i*10,10,30+i*10),new Rect2(10,20+i*10,100,30+i*10)}).ToArray();
-        var groups=BilingualTableLayout.TranslationGroups(title.Concat(regular).Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[]);
+        var groups=BilingualTableLayout.TranslationGroups(title.Concat(regular).Select(c=>new LayoutRegion("cell",LayoutRegionKind.TableCell,c)),[],
+            [(new Rect2(1,1,10,5),"设计"),(new Rect2(21,9,40,15),"审核"),(new Rect2(11,21,20,25),"设备名称")]);
         AssertEx.Equal(2,groups.Count);
         AssertEx.True(groups.Any(g=>g.Length==4 && g.ToHashSet().SetEquals(title)));
         AssertEx.True(groups.Any(g=>g.Length==8 && g.ToHashSet().SetEquals(regular)));
@@ -901,35 +1000,11 @@ internal static class Tests
 
     public static void BilingualGroupLayoutSearchesFrameAlignedPanelSpace()
     {
-        string root = Directory.GetCurrentDirectory();
-        string source = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "cad",
-            "CadTranslation.AutoCAD2025",
-            "BilingualGroupLayout.cs"));
-
-        AssertEx.True(source.Contains(
-            "Destinations(group.Source,w,total,sourceHeight,allowed,frame?.Bounds)",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "frame?.Bounds",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "inner.Top+gap",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "allowed.Top-gap-h",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "new(source.Left,allowed.Bottom+gap",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "new(allowed.Right-gap-w,allowed.Bottom+gap",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "new(allowed.Left+gap,source.Bottom-gap-h",
-            StringComparison.Ordinal));
+        var candidates=BilingualPanelPlacement.Destinations(new Rect2(20,20,40,40),20,10,2,
+            new Rect2(0,0,100,100),new Rect2(10,10,50,50)).ToArray();
+        AssertEx.True(candidates.Any(b=>b.Left==20 && b.Top<20));
+        AssertEx.True(candidates.Any(b=>b.Bottom>50));
+        AssertEx.True(candidates.All(b=>new Rect2(0,0,100,100).Contains(b)));
     }
 
     public static void BilingualNotePanelMayUseClearSpaceBeyondInnerFrame()

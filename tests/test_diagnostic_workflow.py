@@ -44,6 +44,17 @@ class DiagnosticWorkflowTests(unittest.TestCase):
             self.assertNotIn('deliveryReady', result)
             self.assertFalse((root / 'artifacts/replace-visual-review.json').exists())
 
+    def test_bilingual_review_id_list_does_not_crash_diagnostics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            self.fixture(root)
+            (root/'artifacts/replace-layout-audit.json').write_text(json.dumps({
+                'manualReview':['source-a','source-b'],
+                'risks':[{'code':'saved-text-overlap','recordId':'source-a','ownerPath':'model'}]}))
+            result=job_diagnostics.diagnose(root)
+            self.assertEqual(1,result['layout']['riskCount'])
+            self.assertEqual('saved-text-overlap',result['layout']['groups'][0]['code'])
+
     def test_one_batch_per_drawing_compares_intermediate_at_same_windows(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -128,6 +139,16 @@ class DiagnosticWorkflowTests(unittest.TestCase):
             first = job_timing.record(root, 'delivery-ready', now=200)
             again = job_timing.record(root, 'delivery-ready', now=999)
             self.assertEqual(first, again)
+
+    def test_local_correction_time_is_part_of_full_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            job_timing.record(root,'export-start',now=100)
+            with patch('task_recovery.correct',return_value={'status':'corrected'}), patch('job_timing.time.time',side_effect=[200,230]):
+                cad_translate.run_correct(root,root/'corrections.json',root)
+            summary=job_timing.summarize(root)
+            self.assertEqual('correct-finished',summary['lastEvent'])
+            self.assertEqual(130,summary['recordedTaskSeconds'])
 
 
 if __name__ == '__main__':

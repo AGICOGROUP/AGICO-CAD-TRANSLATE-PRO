@@ -58,7 +58,7 @@ internal static class TextAnchorMapper
 
 internal static class CadLayoutGeometry
 {
-    private const double MTextMeasurementSafetyScale = 1.02;
+    internal const double MTextMeasurementSafetyScale = 1.02;
 
     internal static Bounds2d? TryLayoutBounds(Entity entity) =>
         entity is MText mText

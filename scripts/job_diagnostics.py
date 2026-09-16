@@ -62,10 +62,11 @@ def diagnose(job, windows=(), *, render=False):
             issues.append(f"{role}: {drawings[role]['status']}; inspect bindings before using saved images.")
 
     audit = read(f'{mode}-layout-audit.json')
-    risks = audit.get('manualReview', [])
+    # Bilingual manualReview is an ID summary; risk objects live in risks.
+    risks = [r for r in audit.get('risks', audit.get('manualReview', [])) if isinstance(r, dict)]
     groups = {}
     for risk in risks:
-        key = (risk.get('definitionName'), risk.get('regionId'), risk.get('code'))
+        key = (risk.get('definitionName', risk.get('ownerPath')), risk.get('regionId'), risk.get('code'))
         group = groups.setdefault(key, {'definition': key[0], 'region': key[1], 'code': key[2],
                                         'count': 0, 'examples': []})
         group['count'] += 1

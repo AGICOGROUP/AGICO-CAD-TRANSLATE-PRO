@@ -170,7 +170,30 @@ internal static class BilingualDrawingImporter
                     topology[group.RecordIds[0]]=leader with { Source=leader.Source with {Bounds=union,Anchor=union.Center} };
                 }
                 var definitions = baseline.Definitions.ToDictionary(d => d.Name);
-                var tableGroups = baseline.Definitions.ToDictionary(d => d.Name, d => BilingualTableLayout.Groups(d.Regions));
+                // Tables can have parent-space text and grid lines inside anonymous blocks.
+                // Project before classification, and share one table index across all planners.
+                progress.Stage = "project-bilingual-boundaries";
+                ProjectNearbyBoundaries(definitions, baseline, inputs);
+                baseline = baseline with { Definitions = definitions.Values.ToArray() };
+                var inputByRecord = inputs.ToDictionary(i=>i.Manifest.RecordId);
+                var titleFields = baseline.Definitions.SelectMany(d=>d.Texts
+                    .Where(t=>inputByRecord.ContainsKey(t.RecordId))
+                    .Select(t=>(Owner:d.Name,Bounds:t.Source.Bounds,Text:Plain(inputByRecord[t.RecordId].Manifest.RawText))))
+                    .Where(t=>BilingualTitlePanel.IsTitleField(t.Text)).ToArray();
+                IReadOnlyList<Rect2[]> Tables(CadDefinitionTopology owner)
+                {
+                    // Classify placed FIELD locations, never the enclosing block's
+                    // full text bounds: one block can contain a whole sheet.
+                    var labels=owner.Texts.Where(t=>inputByRecord.ContainsKey(t.RecordId))
+                        .Select(t=>(Bounds:t.Source.Bounds,Text:Plain(inputByRecord[t.RecordId].Manifest.RawText)))
+                        .Concat(titleFields.Where(t=>t.Owner!=owner.Name).SelectMany(t=>
+                            InstanceOccupancyProjection.Project(t.Bounds,t.Owner,owner.Name,baseline.BlockInstances)
+                                .Select(b=>(Bounds:b,Text:t.Text)))).ToArray();
+                    return BilingualTableLayout.TranslationGroups(owner.Regions,owner.BoundarySegments,labels)
+                        .Where(cells=>!BilingualTitlePanel.IsTitlePanel(labels.Where(t=>cells.Any(c=>c.Contains(
+                            new Rect2(t.Bounds.Center.X,t.Bounds.Center.Y,t.Bounds.Center.X,t.Bounds.Center.Y)))).Select(t=>t.Text))).ToArray();
+                }
+                var tableGroups = baseline.Definitions.ToDictionary(d => d.Name, Tables);
                 var occupied = baseline.Definitions.ToDictionary(d => d.Name, d => d.Texts.Select(t => t.Source.Bounds).ToList());
                 foreach (var item in baseline.Definitions.SelectMany(d => d.Texts.Select(t => (Definition: d.Name, Bounds: t.Source.Bounds))).ToArray())
                     ReserveProjected(occupied, item.Definition, item.Bounds, baseline.BlockInstances, includeLocal: false);
@@ -187,13 +210,10 @@ internal static class BilingualDrawingImporter
                 var tableSlots = new Dictionary<string,BilingualGroupLayout.Slot>();
                 var tableIds = new HashSet<string>();
                 var blockedTables = new HashSet<string>();
-                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, tableSlots, tableIds, blockedTables, access);
+                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, tableSlots, tableIds, blockedTables, access, tableGroups);
                 progress.Stage = "plan-table-slots";
-                foreach(var slot in BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !tableIds.Contains(i.Manifest.RecordId) && !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions))
+                foreach(var slot in BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !tableIds.Contains(i.Manifest.RecordId) && !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions, tableGroups, blockedTables))
                     tableSlots[slot.Key]=slot.Value;
-
-                progress.Stage = "project-bilingual-boundaries";
-                ProjectNearbyBoundaries(definitions, baseline, inputs);
 
                 progress.Stage = "place-bilingual-text";
                 foreach (var input in inputs)
@@ -247,7 +267,7 @@ internal static class BilingualDrawingImporter
                     {
                         unresolved.Add(row.RecordId);
                         unresolvedDetails.Add(new {row.RecordId,row.Handle,source.Source,
-                            reason="table-copy-unresolved",details="See bilingual-table-layout.json; keep the table grouped for local repair."});
+                            reason="group-placement-unresolved",details="See bilingual-table-layout.json; keep the region grouped for local repair."});
                         continue;
                     }
                     var owner = OwningBlock(tx, original, access);

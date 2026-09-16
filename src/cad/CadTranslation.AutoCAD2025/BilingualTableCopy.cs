@@ -13,7 +13,8 @@ internal static class BilingualTableCopy
         LayoutWriteInput[] inputs, Dictionary<string, List<Rect2>> occupied, string language,
         List<BilingualDrawingImporter.Pair> pairs, List<CopyReceipt> receipts, List<object> decisions,
         Dictionary<string, BilingualGroupLayout.Slot> inlineSlots, HashSet<string> tableIds, HashSet<string> blocked,
-        CadObjectAccess? access = null)
+        CadObjectAccess? access = null,
+        IReadOnlyDictionary<string, IReadOnlyList<Rect2[]>>? tableGroups = null)
     {
         access ??= new CadObjectAccess(db, tx);
         var requiredIds = inputs.Select(i => i.ObjectId).ToHashSet();
@@ -46,7 +47,11 @@ internal static class BilingualTableCopy
             // Definitions instantiated multiple times need instance-specific placement, not one shared copy.
             if (!definition.Name.StartsWith("*Model_Space", StringComparison.OrdinalIgnoreCase) &&
                 !definition.Name.StartsWith("*Paper_Space", StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var cells in BilingualTableLayout.TranslationGroups(definition.Regions,definition.BoundarySegments))
+            var groups = tableGroups?.GetValueOrDefault(definition.Name) ??
+                BilingualTableLayout.TranslationGroups(definition.Regions, definition.BoundarySegments,
+                    definition.Texts.Where(t => byId.ContainsKey(t.RecordId)).Select(t =>
+                        (t.Source.Bounds, BilingualDrawingImporter.Plain(byId[t.RecordId].Manifest.RawText))).ToArray());
+            foreach (var cells in groups)
             {
                 if (cells.Length < 3 || cells.Select(c => Math.Round(c.Center.Y, 3)).Distinct().Count() < 2) continue;
                 var table = new Rect2(cells.Min(c => c.Left), cells.Min(c => c.Bottom), cells.Max(c => c.Right), cells.Max(c => c.Top));
@@ -55,7 +60,9 @@ internal static class BilingualTableCopy
                 var requests = sources.Where(t => changed.ContainsKey(t.RecordId) && !handled.Contains(t.RecordId)).ToArray();
                 if (BilingualTitlePanel.IsTitlePanel(sources.Select(t => BilingualDrawingImporter.Plain(byId[t.RecordId].Manifest.RawText))))
                     continue; // Keep title fields paired locally; do not copy or collect them as a schedule.
-                if (requests.Length == 0) continue;
+                // A real multi-row grid can have just one untranslated heading;
+                // numeric/code-only cells still establish its table structure.
+                if (requests.Length == 0 || sources.Length < 2) continue;
                 Rect2 Cell(CadLayoutText t) => cells.Where(c => c.Contains(new Rect2(t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y,t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y)))
                     .OrderBy(c => c.Area).First();
                 var reuse = new Dictionary<string,CadLayoutText>();
@@ -115,26 +122,48 @@ internal static class BilingualTableCopy
                     var entity = access.Read<Entity>(id, "table-member", definition.Name, owner.Handle.ToString());
                     if (entity is null) { unsupported = true; break; }
                     if (entity is Line line) { if (!Clip(line,table,out _,out _)) continue; }
-                    else if (Bounds(entity) is not { } b || !table.Contains(b,1e-3)) continue;
-                    if (entity is not Line and not MText and not DBText) { unsupported = true; break; }
+                    else
+                    {
+                        if (Bounds(entity) is not { } b) continue;
+                        if (!table.Contains(b, 1e-5))
+                        {
+                            // A crossing block cannot be partially discarded from
+                            // a supposedly complete copy. Enclosing sheet frames
+                            // are not members and remain outside this table unit.
+                            if (entity is BlockReference && !b.Contains(table, 1e-5) && Overlap(table, b, 0))
+                            { unsupported = true; break; }
+                            continue;
+                        }
+                    }
+                    if (entity is BlockReference grid)
+                    {
+                        if (!IsPureGridBlock(tx, grid, table, access)) { unsupported = true; break; }
+                    }
+                    else if (entity is not Line and not MText and not DBText) { unsupported = true; break; }
                     members.Add(entity);
                 }
-                if (unsupported || !members.OfType<Line>().Any() || requests.Any(t => !members.Any(m=>m.ObjectId==t.ObjectId) || Math.Abs(changed[t.RecordId].Manifest.Geometry.RotationRadians) > 1e-6))
+                if (unsupported || !members.Any(m => m is Line or BlockReference) || requests.Any(t => !members.Any(m=>m.ObjectId==t.ObjectId) || Math.Abs(changed[t.RecordId].Manifest.Geometry.RotationRadians) > 1e-6))
                 { decisions.Add(new { table, strategy = "table-copy-unresolved", reason = "unsupported-table-members-or-rotation" }); continue; }
 
                 double gap = cells.Select(c=>c.Height).Order().ElementAt(cells.Length/2)*.25;
-                var offsets = BilingualTablePlacement.AdjacentCopies(table,gap)
-                    .Select(b=>new Vector3d(b.Left-table.Left,b.Bottom-table.Bottom,0)).ToArray();
                 var detectedFrames = DetectFrames(definition.BoundarySegments, table);
                 var frames = definition.Regions.Concat(detectedFrames.Select(b => new LayoutRegion("table-copy-frame",LayoutRegionKind.ClosedFrame,b))).Where(r => r.Bounds.Contains(table) && r.Bounds.Area > table.Area * 1.5)
                     .OrderBy(r => r.Bounds.Area).ToArray();
+                var allFrames=definition.Regions.Where(r=>r.Kind==LayoutRegionKind.ClosedFrame).Select(r=>r.Bounds)
+                    .Concat(frames.Select(f=>f.Bounds)).Concat(baseline.Definitions.Where(d=>d.Name!=definition.Name)
+                        .SelectMany(d=>d.Regions.Where(r=>r.Kind==LayoutRegionKind.ClosedFrame).SelectMany(r=>
+                            InstanceOccupancyProjection.Project(r.Bounds,d.Name,definition.Name,baseline.BlockInstances)))).Distinct().ToArray();
+                var offsets = BilingualTablePlacement.AdjacentCopySearch(table,gap,allFrames)
+                    .Select(b=>new Vector3d(b.Left-table.Left,b.Bottom-table.Bottom,0)).ToArray();
                 Vector3d? selected = null;
-                foreach (var offset in offsets)
+                foreach (var offset in offsets.OrderBy(o => frames.Length > 0 && !frames[0].Bounds.Contains(Move(table, o), 1e-5))
+                    .ThenBy(o=>BilingualLocalPlacement.Gap(table,Move(table,o))))
                 {
                     Rect2 destination = Move(table, offset);
+                    if(!BilingualPanelPlacement.AvoidsOtherFrames(table,destination,DetectFrames(definition.BoundarySegments,destination)))continue;
                     if (occupied[definition.Name].Any(b => Overlap(destination, b, gap*.1))) continue;
                     if (definition.BoundarySegments.Any(s => Overlap(destination, new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY), gap*.1))) continue;
-                    if (definition.ProtectedGeometry.Any(g => !g.Bounds.Contains(destination) && Overlap(destination,g.Bounds,gap*.1))) continue;
+                    if (definition.ProtectedGeometry.Any(g => !g.Bounds.Contains(table) && Overlap(destination,g.Bounds,gap*.1))) continue;
                     selected = offset; break;
                 }
                 if (selected is not { } delta)
@@ -151,7 +180,18 @@ internal static class BilingualTableCopy
                     var text = sources.FirstOrDefault(t => t.ObjectId == member.ObjectId && changed.ContainsKey(t.RecordId));
                     var alias=reuse.FirstOrDefault(p=>p.Value.ObjectId==member.ObjectId);
                     if(alias.Key is not null) text=sources.First(t=>t.RecordId==alias.Key);
-                    Entity clone = (Entity)member.Clone();
+                    Entity clone;
+                    if(member is BlockReference originalGrid)
+                    {
+                        // Clone() copies persistent associative-array reactors:
+                        // saving that shared dependency can suppress the original
+                        // grid's display even while its geometry signature passes.
+                        var grid=new BlockReference(Point3d.Origin,originalGrid.BlockTableRecord);
+                        grid.SetPropertiesFrom(originalGrid);
+                        grid.TransformBy(originalGrid.BlockTransform);
+                        clone=grid;
+                    }
+                    else clone = (Entity)member.Clone();
                     if (member is Line originalLine && clone is Line clonedLine && Clip(originalLine,table,out var start,out var end))
                     { clonedLine.StartPoint=start; clonedLine.EndPoint=end; }
                     string? target = null;
@@ -202,15 +242,28 @@ internal static class BilingualTableCopy
     private static bool Fit(Entity entity, string target, Rect2 cell, string language)
     {
         double originalHeight = entity is MText mt ? mt.TextHeight : ((DBText)entity).Height;
-        var inner = new Rect2(cell.Left+originalHeight*.15,cell.Bottom+originalHeight*.15,cell.Right-originalHeight*.15,cell.Top-originalHeight*.15);
-        foreach (double scale in new[] {1.0,.9,.8,.7,.65})
+        foreach (double scale in new[] {1.0,.9,.8,.7,.65,.6})
         {
+            // Padding follows the measured target size, not the larger source
+            // size; keep real clearance without rejecting a readable wrapped row.
+            double inset=originalHeight*scale*.15;
+            if(cell.Width<=2*inset || cell.Height<=2*inset)continue;
+            var inner=new Rect2(cell.Left+inset,cell.Bottom+inset,cell.Right-inset,cell.Top-inset);
             if (entity is MText text)
             {
-                text.Contents = (language.StartsWith("zh",StringComparison.OrdinalIgnoreCase) ? @"\FSimSun;" : "") + target.Replace("\\","\\\\").Replace("{","\\{").Replace("}","\\}");
+                // New target text uses the same language-capable font policy as
+                // other bilingual labels, not a source-only legacy SHX face.
+                text.Contents = BilingualGroupLayout.Contents(target,language);
                 text.TextHeight = originalHeight*scale;
                 text.Width = 0;
-                if (text.ActualWidth > inner.Width) text.Width = inner.Width;
+                if (text.ActualWidth*CadLayoutGeometry.MTextMeasurementSafetyScale > inner.Width)
+                {
+                    text.Width = inner.Width/CadLayoutGeometry.MTextMeasurementSafetyScale;
+                    // Native word wrapping may slightly exceed the requested
+                    // width; correct the measured width before trying smaller text.
+                    for(int attempt=0;attempt<3 && text.ActualWidth*CadLayoutGeometry.MTextMeasurementSafetyScale>inner.Width;attempt++)
+                        text.Width*=inner.Width/(text.ActualWidth*CadLayoutGeometry.MTextMeasurementSafetyScale)*.995;
+                }
             }
             else { var text2=(DBText)entity; text2.TextString=target; text2.Height=originalHeight*scale; }
             if (Bounds(entity) is not { } b || b.Width > inner.Width || b.Height > inner.Height) continue;
@@ -230,39 +283,106 @@ internal static class BilingualTableCopy
         using var tx = db.TransactionManager.StartTransaction();
         foreach (var copy in copies)
         {
-            Entity Get(string h) => (Entity)tx.GetObject(db.GetObjectId(false,new Handle(Convert.ToInt64(h,16)),0),OpenMode.ForRead);
+            if (copy.Table.Area <= 0 || !double.IsFinite(copy.Table.Area))
+                throw new CommandProtocolException("bilingual_table_copy_mismatch", "A copied table requires valid persisted source bounds.");
+            Entity Get(string h)
+            {
+                var id = db.GetObjectId(false, new Handle(Convert.ToInt64(h, 16)), 0);
+                if (id.IsNull || !id.IsValid || id.IsErased || tx.GetObject(id, OpenMode.ForRead) is not Entity entity)
+                    throw new CommandProtocolException("bilingual_table_copy_mismatch", $"Missing table entity {h}.");
+                return entity;
+            }
             var source = Get(copy.SourceHandle); var target = Get(copy.TargetHandle);
-            bool valid = source.GetRXClass().Name == target.GetRXClass().Name && source.Layer == target.Layer &&
-                source.Color == target.Color && source.LinetypeId == target.LinetypeId && source.LineWeight == target.LineWeight;
+            bool sameClass=source.GetRXClass().Name == target.GetRXClass().Name, sameLayer=source.Layer == target.Layer;
+            bool sameColor=source.Color == target.Color, sameLineType=source.LinetypeId == target.LinetypeId;
+            bool sameLineWeight=source.LineWeight == target.LineWeight;
+            bool valid = sameClass && sameLayer && sameColor && sameLineType && sameLineWeight;
+            string geometry="";
             if (source is Line a && target is Line b)
             {
                 var delta = new Vector3d(copy.Dx,copy.Dy,0);
-                valid &= Clip(a,copy.Table,out var start,out var end) && (start+delta).DistanceTo(b.StartPoint)<1e-5 && (end+delta).DistanceTo(b.EndPoint)<1e-5;
+                bool clipped = Clip(a, copy.Table, out var start, out var end);
+                bool forward=(start+delta).DistanceTo(b.StartPoint)<1e-5 && (end+delta).DistanceTo(b.EndPoint)<1e-5;
+                bool reversed=(start+delta).DistanceTo(b.EndPoint)<1e-5 && (end+delta).DistanceTo(b.StartPoint)<1e-5;
+                valid &= clipped && (forward || reversed);
+                geometry=$" clipped={clipped} forward={forward} reversed={reversed} expected={start+delta}|{end+delta} actual={b.StartPoint}|{b.EndPoint}";
             }
-            else
+            else if (source is BlockReference sourceBlock && target is BlockReference targetBlock)
+            {
+                var expected = Matrix3d.Displacement(new Vector3d(copy.Dx, copy.Dy, 0)) * sourceBlock.BlockTransform;
+                valid &= sourceBlock.BlockTableRecord == targetBlock.BlockTableRecord &&
+                    IsPureGridBlock(tx, sourceBlock, copy.Table, new CadObjectAccess(db, tx)) &&
+                    expected.ToArray().Zip(targetBlock.BlockTransform.ToArray()).All(p => Math.Abs(p.First - p.Second) < 1e-5);
+            }
+            else if (source is MText or DBText && target is MText or DBText)
             {
                 string Read(Entity e) => e is MText m ? m.Text : ((DBText)e).TextString;
-                valid &= Read(target) == (copy.TargetText ?? Read(source));
+                string expected = copy.TargetText ?? Read(source);
+                static string Canonical(string value) => value.Replace("\r\n", "\n").Replace("\r", "\n");
+                valid &= Canonical(Read(target)) == Canonical(expected);
                 if (copy.TargetText is null && Bounds(source) is { } s && Bounds(target) is { } t)
                     valid &= Math.Abs(t.Left-s.Left-copy.Dx)<1e-3 && Math.Abs(t.Bottom-s.Bottom-copy.Dy)<1e-3;
             }
-            if (!valid) throw new CommandProtocolException("bilingual_table_copy_mismatch",$"Invalid table copy {copy.SourceHandle} -> {copy.TargetHandle}");
+            else valid = false;
+            if (!valid) throw new CommandProtocolException("bilingual_table_copy_mismatch",$"Invalid table copy {copy.SourceHandle} -> {copy.TargetHandle}; class={sameClass}, layer={sameLayer}, color={sameColor}, linetype={sameLineType}, lineweight={sameLineWeight}.{geometry}");
         }
+    }
+
+    // The parent may contain text while repeated row separators live several
+    // definitions below it. Preserve a pure grid's nested structure as a block;
+    // never duplicate a mixed equipment/text block just because its bbox fits.
+    private static bool IsPureGridBlock(Transaction tx, BlockReference root, Rect2 table, CadObjectAccess access)
+    {
+        var active = new HashSet<ObjectId>();
+        int visited = 0, lineCount = 0;
+        bool Walk(BlockReference reference, Matrix3d transform, int depth)
+        {
+            if (depth > 32 || ++visited > 4096 || reference.AttributeCollection.Count != 0 ||
+                !active.Add(reference.BlockTableRecord)) return false;
+            try
+            {
+                var definition = access.Read<BlockTableRecord>(reference.BlockTableRecord, "table-grid-definition", null, reference.Handle.ToString());
+                if (definition is null || definition.IsFromExternalReference || definition.IsFromOverlayReference) return false;
+                foreach (ObjectId id in definition)
+                {
+                    var member = access.Read<Entity>(id, "table-grid-member", definition.Name);
+                    if (member is BlockReference nested)
+                    {
+                        if (!Walk(nested, transform * nested.BlockTransform, depth + 1)) return false;
+                    }
+                    else if (member is Line line)
+                    {
+                        var a = line.StartPoint.TransformBy(transform);
+                        var b = line.EndPoint.TransformBy(transform);
+                        if (Math.Abs(a.Z - b.Z) > 1e-5 || a.DistanceTo(b) <= 1e-5 ||
+                            Math.Abs(a.X - b.X) > 1e-5 && Math.Abs(a.Y - b.Y) > 1e-5 ||
+                            !table.Contains(new Rect2(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y), Math.Max(a.X, b.X), Math.Max(a.Y, b.Y)), 1e-5))
+                            return false;
+                        lineCount++;
+                    }
+                    else return false;
+                }
+                return true;
+            }
+            finally { active.Remove(reference.BlockTableRecord); }
+        }
+        return Walk(root, root.BlockTransform, 0) && lineCount > 0;
     }
 
     private static bool Clip(Line line,Rect2 table,out Point3d start,out Point3d end)
     {
+        const double tolerance=1e-5;
         start=line.StartPoint; end=line.EndPoint;
-        if (Math.Abs(start.Y-end.Y)<1e-3 && start.Y>=table.Bottom-1e-3 && start.Y<=table.Top+1e-3)
+        if (Math.Abs(start.Y-end.Y)<tolerance && start.Y>=table.Bottom-tolerance && start.Y<=table.Top+tolerance)
         {
             double left=Math.Max(table.Left,Math.Min(start.X,end.X)),right=Math.Min(table.Right,Math.Max(start.X,end.X));
-            if(right-left<=1e-3) return false;
+            if(right-left<=tolerance) return false;
             bool forward=start.X<end.X; start=new Point3d(forward?left:right,start.Y,start.Z); end=new Point3d(forward?right:left,end.Y,end.Z); return true;
         }
-        if (Math.Abs(start.X-end.X)<1e-3 && start.X>=table.Left-1e-3 && start.X<=table.Right+1e-3)
+        if (Math.Abs(start.X-end.X)<tolerance && start.X>=table.Left-tolerance && start.X<=table.Right+tolerance)
         {
             double bottom=Math.Max(table.Bottom,Math.Min(start.Y,end.Y)),top=Math.Min(table.Top,Math.Max(start.Y,end.Y));
-            if(top-bottom<=1e-3) return false;
+            if(top-bottom<=tolerance) return false;
             bool forward=start.Y<end.Y; start=new Point3d(start.X,forward?bottom:top,start.Z); end=new Point3d(end.X,forward?top:bottom,end.Z); return true;
         }
         return false;

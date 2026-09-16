@@ -803,7 +803,14 @@ def run_resume(job: Path, autocad_root: Path, timeout_seconds: int | None = None
 def run_correct(job: Path, corrections: Path, autocad_root: Path, timeout_seconds: int | None = None):
     import types
     from task_recovery import correct
-    return correct(absolute(job), absolute(corrections), autocad_root, timeout_seconds, types.SimpleNamespace(**globals()))
+    record_timing(absolute(job), 'correct-start')
+    try:
+        result = correct(absolute(job), absolute(corrections), autocad_root, timeout_seconds, types.SimpleNamespace(**globals()))
+    except Exception:
+        record_timing(absolute(job), 'correct-failed')
+        raise
+    record_timing(absolute(job), 'correct-finished')
+    return result
 
 def status(job: Path) -> dict[str, object]:
     job = absolute(job); candidates = list((job / "results").glob("candidate.*")) if job.is_dir() else []

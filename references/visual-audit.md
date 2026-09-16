@@ -1,39 +1,48 @@
 # Source/candidate visual review
 
-Automatic success is not visual acceptance. Each mode owns its receipt: `replace-visual-review.json` or `bilingual-visual-review.json`. Never reuse another mode's review. For bilingual tables, inspect `bilingual-table-layout.json`: verify that multi-column schedules used a full-size target-language copy when space allowed, with all outer/grid borders present, original row/column geometry retained and readable target text. Check recorded fallback reasons against the actual drawing; source retention alone does not establish acceptable table layout.
+Automatic checks do not establish visual acceptance. Review the actual final candidate yourself and write only its mode-specific, hash-bound receipt: `replace-visual-review.json` or `bilingual-visual-review.json`.
 
-Render matching source/candidate overviews, then detail windows for dense tables, title blocks, new bilingual labels and changed prose. Read compact layout reports to select windows; inspect both images yourself. Overview alone cannot establish small-text legibility.
+## Render readable evidence
 
-Use world-space extents from actual placed instances for detail windows; block-definition local coordinates are not drawing coordinates. Verify the intended region is present and text is readable before counting an image as evidence. Empty crops, tiny whole-sheet thumbnails and cut-off titles cannot support a passed review. Correct the window rather than writing a passing receipt. Compare company names, equipment/material qualifiers and any shortened or reduced-height labels against the source. Include the final post-composition drawing, not an intermediate layout candidate.
+Select representative regions from compact layout reports and render matching source/candidate overviews plus readable details in one batch. Include dense tables, title blocks, new bilingual labels and changed prose. Use actual placed-world bounds, not block-definition coordinates; check rotated/nested instances individually when not covered.
 
 ```powershell
-# Replacement: batch matching overviews and explicit readable detail windows.
-# Replace these example coordinates with actual placed extents; repeat --window as needed.
+# Replacement: replace example coordinates with actual world extents; repeat --window as needed.
 python scripts/cad_translate.py diagnose --job "jobs/example" --window 618360 -22339 634212 -13500 --render
-# Bilingual: batch matching overviews and all placed instances of selected source handles.
+# Bilingual: replace handles with selected source handles; includes their placed instances.
 python scripts/render_review.py --job "jobs/example" --handles "AB,CD"
 ```
 
-The renderer works on a disposable copy, sets a world-plan view and disables quick-text boxes before zooming to native world bounds. Bilingual batch mode reads `bilingual-review-windows.json`, accepts native model-space name casing, keeps each selected block instance and writes associations to `review-render-plan.json`. Replacement diagnosis writes associations to `diagnostic-summary.json` and includes a matching saved pre-composition detail when available to locate composition defects. That intermediate is diagnostic evidence, not the deliverable. Both routes render all requested windows with one CAD session per drawing and do not approve images. Select representative regions in one batch. If distant source objects shrink the full-extents overview, keep that overview for scope and use readable world-coordinate detail windows for the main sheet and outlying translated content; do not treat empty paper-space output as successful review. Use explicit layout review for genuine paper-space windows. Do not render directly into the original DWG or send localized QUIT/save responses. Repeated renders reuse only images whose drawing hash, window, view mode, renderer identity and image digest still match. Changed inputs produce fresh versioned image names; use the returned paths in review evidence. The batch renderer resolves the current final candidatePath after corrections. Existing images alone never prove freshness.
+The renderer uses disposable drawings, world-plan/native bounds and readable text display. It batches each drawing's windows in one CAD session without approving images or saving changes to the source. `review-render-plan.json` (bilingual) or `diagnostic-summary.json` (diagnosis) links windows to returned image paths. Replacement may include a saved pre-composition view to locate defects; that intermediate is not delivery evidence.
 
-Replacement acceptance: accurate target-only content and readable fitting without material obstruction or ambiguous cell/diagram association. Bilingual acceptance: unchanged readable source, complete and clearly associated translations, no misleading duplication and unchanged non-text content. Short labels should remain single-line when space permits; an unnecessary but readable wrap is cosmetic, not by itself a failed drawing. Check rotated/nested block instances individually when not covered by the overview.
+Keep a full-extents overview for scope, but use details when outlying objects make the sheet tiny. Empty crops, unreadable thumbnails and cut-off content do not count: correct the window, including new bounds after local correction. For bilingual tables and prose placed outside a frame, inspect the full source/target association and clear same-side placement. A DWG may pass with a disclosed printing warning: the existing print window or viewport may omit the supplement. Do not claim printability or change plot settings. A requested plotted PDF/fixed print layout still requires actual inclusion; use explicit layout review for paper-space content.
 
-Use `passed` for usable output without outstanding defects, `passed_with_warnings` for usable output with localized cosmetic imperfections, and `failed` for material defects. List minor imperfections in `warnings` and material defects in `blockingIssues`. Never downgrade missing/misleading translations, wrong numbers/units, unreadable glyphs, serious text/dimension obstruction, wrong row/source association or source/geometry damage to cosmetic warnings. Assess overall usability as well as individual defects; do not claim a 9/10 score without a defined evaluation. Do not rebuild a usable drawing just for cosmetic perfection. If blocked, retain the best candidate and give the user concrete remaining issues, not only a generic failure message.
+Reuse images only when drawing hash, window, view mode, renderer identity and image digest still match within the same test. Use current returned paths; an old image's existence does not prove freshness. Batch rendering resolves the current final `candidatePath` after corrections.
 
-After actual inspection, write the selected receipt under that job's `artifacts`:
+## Decide usability
+
+Replacement requires accurate target-only content, full meaning and readable fitting with correct cell/diagram association. Bilingual requires unchanged readable source, complete clearly associated translations, no misleading duplication and intact non-text content. Compare technical qualifiers, company names, numbers/units and shortened or small labels against the source.
+
+For bilingual groups, compare `bilingual-table-layout.json` with the complete visible source/target structure. A roomy table may correctly use inline suffixes; a crowded table requires a complete adjacent copy, not a copied header plus detached body. Verify grid/merged cells, numeric fields and row associations. Keep short legend translations in aligned same-row columns; prose panels retain the full source block's order and association. The layout report is a review aid, not proof that classification is correct.
+
+Use `passed` when usable without outstanding defects, `passed_with_warnings` for localized cosmetic imperfections, and `failed` for material defects. A readable unnecessary wrap or slight alignment difference may be a warning. Missing/misleading translations, changed numbers/units, unreadable glyphs, serious obstruction, wrong associations or source/geometry damage remain blocking. Consider widespread minor defects together; stop cosmetic iteration once usable, without inventing a numerical quality score.
+
+## Record and finish
+
+After inspecting the images, write the selected receipt under the job's `artifacts`:
 
 ```json
 {
   "status": "passed",
   "sourceSha256": "exact sourceSha256 from config/export-job.json",
-  "candidateSha256": "exact hash from the selected mode's final receipt",
-  "images": ["source-overview.png", "candidate-overview.png", "source-title.png", "candidate-title.png"],
-  "notes": "Describe inspected regions and findings.",
+  "candidateSha256": "exact hash from this mode's final receipt",
+  "images": ["source-overview.png", "candidate-overview.png", "source-detail.png", "candidate-detail.png"],
+  "notes": "Actual inspected regions and findings, including group and plot association when relevant.",
   "warnings": [],
   "blockingIssues": []
 }
 ```
 
-For `passed_with_warnings`, supply a nonempty list of concise warning strings. Assess layout and readability together in this final visual review; no separate `layoutAssessment`, per-record approval list or overflow sign-off is required. Use `layoutReviewRecordIds` and `segmentOverflowCount` as pointers to relevant detail windows, grouping adjacent findings in one view. Judge actual engineering readability: a geometric contact may be an innocuous touch or a serious obstruction. Record the inspected regions and outcome in `notes`; if a material defect remains, use `failed` with `blockingIssues`.
+Replace example values with actual bindings and paths relative to `artifacts`, including both source and candidate evidence. `passed_with_warnings` needs nonempty warnings; `failed` needs concrete blocking issues. Use `layoutReviewRecordIds` and `segmentOverflowCount` to select relevant regions, not as automatic pass/fail thresholds. No separate per-record approval or layout receipt is required.
 
-`images` are real paths relative to artifacts. Include source and candidate evidence. Re-run `audit-summary`; `deliveryReady=true` with `deliveryStatus=ready_with_warnings` is valid delivery with the returned warnings disclosed. A failed candidate may be shared only as an explicitly labeled review draft. Any changed candidate hash invalidates the previous review. Both branches own their review logic; replacement reviews cannot clear bilingual missing additions or source changes.
+Re-run `audit-summary`. Deliver only with `deliveryReady=true`; disclose returned warnings for `ready_with_warnings`. A failed candidate may be shared only as a labeled review draft. A changed candidate hash invalidates the old visual receipt; another mode's receipt cannot clear this mode's failures.

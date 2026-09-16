@@ -3,43 +3,32 @@ namespace CadTranslation.Core;
 /// <summary>Connected grid cells only; isolated frames and free labels are not tables.</summary>
 public static class BilingualTableLayout
 {
-    // A schedule and a title panel often share an edge. Split repeated row grids
-    // from the irregular panel, keeping merged cells intact across every cut.
-    public static IReadOnlyList<Rect2[]> TranslationGroups(IEnumerable<LayoutRegion> regions, IReadOnlyList<Segment2> segments)
+    // A header is part of its table. Only positive title-field evidence can split
+    // an attached title panel from a schedule; row-height changes are not evidence.
+    public static IReadOnlyList<Rect2[]> TranslationGroups(IEnumerable<LayoutRegion> regions, IReadOnlyList<Segment2> segments,
+        IReadOnlyList<(Rect2 Bounds, string Text)>? labels = null)
     {
         var result = new List<Rect2[]>();
         foreach (var connected in CompleteGroups(regions, segments))
         {
             var cells = connected.Where(c => !connected.Any(b => b != c && c.Contains(b) && b.Area < c.Area - 1e-5)).ToArray();
-            var cuts = cells.SelectMany(c => new[] { c.Bottom, c.Top }).Distinct().Order()
-                .Where(y => !cells.Any(c => c.Bottom < y - 1e-5 && c.Top > y + 1e-5)).ToArray();
-            var bands = cuts.Zip(cuts.Skip(1), (bottom, top) => cells.Where(c =>
-                c.Bottom >= bottom - 1e-5 && c.Top <= top + 1e-5).OrderBy(c => c.Left).ToArray())
-                .Where(b => b.Length > 0).ToArray();
-            bool Same(Rect2[] a, Rect2[] b) => a.Length == b.Length && a.Zip(b).All(p =>
-                Math.Abs(p.First.Left - p.Second.Left) < 1e-5 && Math.Abs(p.First.Right - p.Second.Right) < 1e-5 &&
-                Math.Abs(p.First.Height - p.Second.Height) < Math.Max(p.First.Height, p.Second.Height) * .1 + 1e-5);
-            var used = new HashSet<Rect2>();
-            for (int start = 0; start < bands.Length;)
+            bool split = false;
+            if (labels is not null)
             {
-                int end = start + 1;
-                while (end < bands.Length && Same(bands[start], bands[end]) &&
-                    Math.Abs(bands[end - 1].Max(c => c.Top) - bands[end].Min(c => c.Bottom)) < 1e-5) end++;
-                if (end - start >= 3)
+                var cuts = cells.Select(c => c.Top).Distinct().Order()
+                    .Where(y => !cells.Any(c => c.Bottom < y - 1e-5 && c.Top > y + 1e-5));
+                foreach (double cut in cuts)
                 {
-                    var regular = bands.Skip(start).Take(end - start).SelectMany(b => b).ToList();
-                    // A two-column list may have one extra row on just one side.
-                    foreach(var band in bands.Where(b=>b.Length<bands[start].Length &&
-                        b.All(c=>bands[start].Any(r=>Math.Abs(c.Left-r.Left)<1e-5 && Math.Abs(c.Right-r.Right)<1e-5 &&
-                            Math.Abs(c.Height-r.Height)<r.Height*.1+1e-5))))
-                        if(!band.Any(used.Contains) && (Math.Abs(band.Min(c=>c.Bottom)-regular.Max(c=>c.Top))<1e-5 ||
-                            Math.Abs(band.Max(c=>c.Top)-regular.Min(c=>c.Bottom))<1e-5)) regular.AddRange(band);
-                    result.Add(regular.ToArray()); used.UnionWith(regular);
+                    var lower = cells.Where(c => c.Top <= cut + 1e-5).ToArray();
+                    var upper = cells.Where(c => c.Bottom >= cut - 1e-5).ToArray();
+                    if (lower.Length < 2 || upper.Select(c=>c.Bottom).Distinct().Count() < 3) continue;
+                    IEnumerable<string> In(Rect2[] group) => labels.Where(t=>group.Any(c=>c.Contains(
+                        new Rect2(t.Bounds.Center.X,t.Bounds.Center.Y,t.Bounds.Center.X,t.Bounds.Center.Y)))).Select(t=>t.Text);
+                    if (!BilingualTitlePanel.IsTitlePanel(In(lower)) || BilingualTitlePanel.IsTitlePanel(In(upper))) continue;
+                    result.Add(lower); result.Add(upper); split = true; break;
                 }
-                start = end;
             }
-            result.AddRange(Groups(cells.Where(c => !used.Contains(c))
-                .Select(c => new LayoutRegion("table-remainder", LayoutRegionKind.TableCell, c))));
+            if (!split) result.Add(cells);
         }
         return result;
     }
@@ -50,28 +39,55 @@ public static class BilingualTableLayout
     {
         var all=regions.ToList();
         const double tolerance=.001;
-        var vertical=segments.Where(s=>s.IsVertical(tolerance)).ToArray();
-        foreach(var span in segments.Where(s=>s.IsHorizontal(tolerance) && s.MaxX-s.MinX>tolerance)
-            .GroupBy(s=>(Math.Round(s.MinX,3),Math.Round(s.MaxX,3))))
+        var horizontal=Merge(segments.Where(s=>s.IsHorizontal(tolerance)),true,tolerance);
+        var vertical=Merge(segments.Where(s=>s.IsVertical(tolerance)),false,tolerance);
+        var ys=horizontal.Select(s=>s.Start.Y).Distinct().Order().ToArray();
+        // Sweep local bands. Unrelated ticks elsewhere in the drawing cannot
+        // subdivide a merged cell, and segmented collinear edges stay continuous.
+        for(int i=1;i<ys.Length;i++)
         {
-            var lines=span.OrderBy(s=>s.Start.Y).ToArray();
-            var ys=lines.Select(s=>s.Start.Y).Distinct().Order().ToArray();
-            if(ys.Length<4) continue;
-            double left=lines[0].MinX,right=lines[0].MaxX;
-            var gaps=ys.Zip(ys.Skip(1),(a,b)=>b-a).Where(h=>h>tolerance).Order().ToArray();
-            double typical=gaps[gaps.Length/2];
-            for(int i=1;i<ys.Length;i++)
+            double y=(ys[i]+ys[i-1])/2;
+            var sides=vertical.Where(s=>s.MinY<y && s.MaxY>y).OrderBy(s=>s.Start.X).ToArray();
+            for(int x=1;x<sides.Length;x++)
             {
-                if(ys[i]-ys[i-1]>typical*1.6) continue;
-                var edges=vertical.Where(s=>s.Start.X>=left-tolerance && s.Start.X<=right+tolerance && s.MinY<=ys[i-1]+tolerance && s.MaxY>=ys[i]-tolerance)
-                    .Select(s=>s.Start.X).Distinct().Order().ToArray();
-                for(int x=1;x<edges.Length;x++)
-                    if(edges[x]-edges[x-1]>tolerance) all.Add(new LayoutRegion("bilingual-grid-strip",LayoutRegionKind.TableCell,new(edges[x-1],ys[i-1],edges[x],ys[i])));
+                var a=sides[x-1];var b=sides[x];double left=a.Start.X,right=b.Start.X;
+                if(right-left<=tolerance) continue;
+                var cross=horizontal.Where(s=>s.MinX<=left+tolerance && s.MaxX>=right-tolerance).ToArray();
+                var bottom=cross.Where(s=>s.Start.Y<y).OrderByDescending(s=>s.Start.Y).FirstOrDefault();
+                var top=cross.Where(s=>s.Start.Y>y).OrderBy(s=>s.Start.Y).FirstOrDefault();
+                if(top==default || bottom==default || top.Start.Y-bottom.Start.Y<=tolerance ||
+                    bottom.MinX>left+tolerance || bottom.MaxX<right-tolerance || top.MinX>left+tolerance || top.MaxX<right-tolerance ||
+                    a.MinY>bottom.Start.Y+tolerance || b.MinY>bottom.Start.Y+tolerance || a.MaxY<top.Start.Y-tolerance || b.MaxY<top.Start.Y-tolerance) continue;
+                all.Add(new LayoutRegion("bilingual-grid-cell",LayoutRegionKind.TableCell,new(left,bottom.Start.Y,right,top.Start.Y)));
             }
         }
         // A recovered full row may contain existing subdivided cells. They belong
         // to the same table even when their outer edges do not touch.
-        return Groups(all);
+        // Remove enclosing frame-sized pseudo-cells before connectivity; doing
+        // this after grouping lets a sheet frame join unrelated tables/legends.
+        var cells=all.Where(r=>r.Kind==LayoutRegionKind.TableCell).DistinctBy(r=>r.Bounds).ToArray();
+        return Groups(cells.Where(a=>!cells.Any(b=>a.Bounds!=b.Bounds && a.Bounds.Contains(b.Bounds) &&
+            b.Bounds.Area<a.Bounds.Area-1e-5)));
+    }
+
+    private static Segment2[] Merge(IEnumerable<Segment2> lines,bool horizontal,double tolerance)
+    {
+        var merged=new List<Segment2>();
+        foreach(var group in lines.GroupBy(s=>Math.Round(horizontal?s.Start.Y:s.Start.X,3)))
+        {
+            double axis=horizontal?group.First().Start.Y:group.First().Start.X;
+            double start=double.NaN,end=double.NaN;
+            void Add(){if(double.IsFinite(start))merged.Add(horizontal?new(new(start,axis),new(end,axis)):new(new(axis,start),new(axis,end)));}
+            foreach(var line in group.OrderBy(s=>horizontal?s.MinX:s.MinY))
+            {
+                double lo=horizontal?line.MinX:line.MinY,hi=horizontal?line.MaxX:line.MaxY;
+                if(!double.IsFinite(start)){start=lo;end=hi;}
+                else if(lo<=end+tolerance)end=Math.Max(end,hi);
+                else {Add();start=lo;end=hi;}
+            }
+            Add();
+        }
+        return merged.ToArray();
     }
     public static IReadOnlyList<Rect2[]> Groups(IEnumerable<LayoutRegion> regions)
     {

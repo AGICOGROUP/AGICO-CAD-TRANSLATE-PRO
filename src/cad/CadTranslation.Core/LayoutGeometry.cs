@@ -18,12 +18,13 @@ public readonly record struct Segment2(Point2 Start, Point2 End)
 
 public readonly record struct Rect2
 {
-    public Rect2(double x1, double y1, double x2, double y2)
+    [System.Text.Json.Serialization.JsonConstructor]
+    public Rect2(double left, double bottom, double right, double top)
     {
-        Left = Math.Min(x1, x2);
-        Bottom = Math.Min(y1, y2);
-        Right = Math.Max(x1, x2);
-        Top = Math.Max(y1, y2);
+        Left = Math.Min(left, right);
+        Bottom = Math.Min(bottom, top);
+        Right = Math.Max(left, right);
+        Top = Math.Max(bottom, top);
     }
 
     public double Left { get; }
