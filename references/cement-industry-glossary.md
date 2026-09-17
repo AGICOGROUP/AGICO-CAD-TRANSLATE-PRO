@@ -1,8 +1,9 @@
-# 水泥专业名词中英对照
+# 水泥专业名词中英对照（修正版）
 
 > 来源：《水泥专业名词（英语）》PDF。按原文顺序整理；蓝色批注中的补充或修订已纳入。
-> 原文件存在少量拼写、大小写和译法差异，本文以忠实提取为主，仅合并明显断行并采用批注中的明确修订。
-> 共整理 1293 条中英对应记录（按“中文+英文”组合去重）。
+> 本表用于翻译检索，每个中文词条保留一个首选英文译法；有语境差异的旧译法以行内 JSON 注释中的 aliases/context 保留，检索结果会显示这些说明。
+> 本修正版已依据人工复核的 Word/Excel 对照结果移除或修正已确认的误导性译法；使用时仍须结合完整短语和工程语境校验。
+> 共整理 1252 个中文词条；27 组原有多译法已合并，按工程语境选择首选或备选，不把多义词强制视为同义词。
 
 
 ## 正文词表（第 1 页）
@@ -10,15 +11,13 @@
 | 中文术语 | English |
 |---|---|
 | 原料粉磨及废气处理 | Raw Material Grinding and Exhaust Gas Treatment |
-| 烧成窑头 | Cooler |
 | 水泥储存及汽车水泥散装站 | Cement Storing and Bulk Loading Station For Truck |
-| 烧成窑尾 | Cyclone Preheater |
 | 熟料储存及次熟料库 | Clinker Storing and Under-Burned Clinker Silo |
 | 熟料输送 | Clinker conveying |
 | 原料预均化堆场及储存 | Raw Material Prehomogenizing and Storing |
 | 石灰石破碎 | Limestone Crushing |
 | 铁矿石耐火粘土堆棚及输送 | Iron Ore, Fire Clay Yard and Conveying |
-| 空压机站 | Compressed Air Station |
+| 空压机站 | Air Compressor Station |
 | 烧成窑中及三次风管 | Kiln and Tertiary Air Duct |
 | 中央控制室 | Central Control Room |
 | 生料粉磨电气室 | Raw Material Grinding Electrical Room |
@@ -27,7 +26,7 @@
 | 水泥磨喂料 | Cement mill feeding |
 | 水泥粉磨电气室 | Cement Grinding Electrical Room |
 | 生料入窑系统 | Kiln Feeding System |
-| 生料均化库 | Raw Meal Homogenizing Silo |
+| 生料均化库 | Raw Meal Homogenizing Silo <!-- {"aliases":["Raw meal homogenization silo"],"context":"生料均化储库；homogenization silo 为同一设备的名词化写法。"} --> |
 | 石灰石输送 | Limestone Conveying |
 | 原料配料站 | Raw Proportioning Station |
 | 燃油系统 | Fuel Oil System |
@@ -51,7 +50,7 @@
 | 熟料储存、石膏破碎及输送 | Clinker Storing Gypsum Crushing and Conveying |
 | 废气处理 | Exhaust Gas Treatment |
 | 水泥包装及袋装水泥发运 | Cement Packing and Bagged Cement Dispatching |
-| 压缩空气站 | Compressed Air Station |
+| 压缩空气站 | Air Compressor Station |
 | 水泥储存及散装水泥 | Cement Storage and Bulk Cement |
 | 烧成系统 | Clinker Burning System |
 | 生产设备 | (Process Equipment) |
@@ -74,9 +73,9 @@
 | 锤式破碎机 | Hammer Crusher |
 | 磨机 | Mill |
 | 旋风筒 | Cyclone |
-| 离心式选粉机 | Centrifugal Air Separator |
+| 离心式选粉机 | Centrifugal Air Separator <!-- {"aliases":["Centrifugal separator"],"context":"水泥粉磨空气选粉设备；普通离心分离设备需结合介质判断。"} --> |
 | 袋式收尘器 | Bag Filter |
-| 立磨 | Roller Mill |
+| 立磨 | Vertical roller mill <!-- {"aliases":["Roller Mill"],"context":"水泥行业立式辊磨机；Roller Mill 本身未表达立式结构。"} --> |
 | 双转子破碎机 | Double-rotor Crusher |
 | 辊压机 | Roller Press |
 | 选粉机 | Separator |
@@ -98,11 +97,10 @@
 | 中文术语 | English |
 |---|---|
 | 输送、喂料设备 | Conveying Feeding Equipment |
-| 埋刮板输送机 | Drag Chain Conveyer |
 | 取料皮带机 | Reclaim belt Conveyor |
 | 堆料皮带机 | (Stacker) Belt Conveyor |
 | 链斗输送机 | Bucket Chain Conveyor |
-| 拉链机 | Drag Chain Conveyor |
+| 拉链机 | Drag Chain Conveyor <!-- {"aliases":["Flow chain conveyor"],"context":"默认链式拖曳输送设备；埋刮板或料流式输送机须结合结构确认 Flow chain conveyor 的适用性。"} --> |
 | 螺旋输送机 | Screw Conveyor |
 | 校正包皮带机 | Bag Aligning conveyor |
 | 振动喂料机 | Vibrating feeder |
@@ -121,7 +119,7 @@
 | 除铁器 | Magnetic Separator |
 | 阀门、闸门 | Valve & Gate |
 | 电动两路阀 | 2- Way Valve With Motor |
-| 棒状阀门 | Rod Gate (Bar Gate) |
+| 棒状阀门 | Rod Gate |
 | 压力平衡阀 | Pressure Balance Valve |
 | 两路料阀 | 2-Way Material Dividing Valve |
 | 三道锁门阀 | Tripe Airlock Gate |
@@ -145,7 +143,7 @@
 | 卧式卷扬机 | Horizontal Motorized hoist |
 | 手动双梁起重机 | Manual Double Beam Crane |
 | 物理实验仪 | Physical Test Instrument |
-| 罗茨风机 | Roots Fan |
+| 罗茨风机 | Roots Blower |
 | 岩相分析仪 | Petrography Analyzer |
 | 非标件 | Non-Standard Parts |
 | 废气风机 | Exhaust Gas Fan |
@@ -189,7 +187,7 @@
 | 单隔仓 | Single Diaphragm |
 | 球面座 | Spherical Seating |
 | 点火装置 | Lighting-up Unit |
-| 护套 | Protective Pipe |
+| 护套 | Protective Pipe <!-- {"aliases":["Shield (Shelter)"],"context":"默认管状保护件；屏蔽或罩壳语境可使用 Shield (Shelter)，不应机械套用管件译法。"} --> |
 | 烘干仓 | Drying Chamber |
 | 出料装置 | Discharger Unit |
 | 隔仓板 | Partition diaphragm |
@@ -201,7 +199,7 @@
 | 一次风 | Primary Air |
 | 筛板 | Screen Plate |
 | 阶梯衬板 | Step Liner |
-| 篦板 | Grate Plate |
+| 篦板 | Grate Plate <!-- {"aliases":["Grate"],"context":"单块篦板用 Grate Plate；Grate 可指整体篦子或炉排。"} --> |
 
 ## 正文词表（第 3 页）
 
@@ -211,33 +209,33 @@
 | 喷嘴 | Nozzle |
 | 浇筑料 | Castable |
 | 煤磨 | Coal Mill |
-| 弯管 | Pipe Bend |
+| 弯管 | Pipe Bend <!-- {"aliases":["Bend Duct"],"context":"管道弯件；风道语境可使用 Bend Duct。"} --> |
 | 油箱 | Oil Tank |
 | 滑履 | Slide Shoe |
 | 磨筒体 | Mill Shell |
 | 轴流风 | Axial Air |
-| 扬料板 | Lift Liner |
+| 扬料板 | Lifting board <!-- {"aliases":["Lift Liner","Dispersing device/Lifter"],"context":"默认扬起物料的板件；Dispersing device/Lifter 用于相应撒料或提升构件，Lift Liner 需衬板语境。"} --> |
 | 滑圈 | Slide Ring |
 | 旋风预热器带分解炉 | Cyclone Preheater with Precalciner |
 | 分解炉体 | Precalciner Shell |
-| 电动分料阀 | Electric Dividing (Distributing) Valve |
-| 托砖板 | Brick-supporting (Brick-bracket) |
+| 电动分料阀 | Electric Dividing Valve <!-- {"aliases":["Electric Dividing (Distributing) Valve"],"context":"电动分料阀；括号中的 Distributing 为替代描述。"} --> |
+| 托砖板 | brick holder <!-- {"aliases":["Brick-supporting (Brick-bracket)"],"context":"托持耐火砖的构件；支架结构可按图纸采用 Brick-bracket。"} --> |
 | 分解炉出风管 | Outlet Duct of Precalciner |
-| 撒料箱 | Dispersion (Distribution) Box |
+| 撒料箱 | Dispersion Box <!-- {"aliases":["Dispersion (Distribution) Box"],"context":"物料分散箱；Distribution 为原词表保留的替代描述。"} --> |
 | 旋风筒内筒 | Cyclone-duct of Cyclone |
-| 撒料板 | Dispersion (Distribution) Plate |
+| 撒料板 | Dispersion Plate <!-- {"aliases":["Dispersion (Distribution) Plate"],"context":"物料分散板；Distribution 为原词表保留的替代描述。"} --> |
 | 单系列预热器 | Single String Preheater |
 | 烟室体 | Smoke Chamber Housing |
 | 旋风筒下部 | Lower Part of Cyclone |
 | 旋风筒上部 | Upper Part of Cyclone |
 | 旋风筒中部 | Middle Part of Cyclone |
 | 观察门 | Observation Door |
-| 检修门 | Inspection Door |
+| 检修门 | Inspection Door <!-- {"aliases":["Access door"],"context":"检修观察门；明确供人员或工具进入的开口可用 Access door。"} --> |
 | 竖管 | Standing Pipe |
 | 翻板阀 | Flap Valve |
 | 吹堵管 | Blast Pipe |
 | 可调阀门 | Adjustable Valve |
-| 下料管 | Chute (Feed Pipe) |
+| 下料管 | Feed Pipe <!-- {"aliases":["Chute (Feed Pipe)"],"context":"默认管状下料件；槽形重力输送件应按结构采用 Chute。"} --> |
 | 壳体 | Shell |
 | 探头 | Probe |
 | 支座 | Supporting Frames |
@@ -246,10 +244,9 @@
 | 环形气管 | Circular Pipe |
 | 斜管 | Inclined-tube |
 | 捅料孔 | Poking Hole |
-| 垫板 | Bed Piece |
+| 垫板 | Bed Piece <!-- {"aliases":["Supporting Block"],"context":"默认支承垫件；块状支承件可用 Supporting Block，垫片类零件须按图纸另行判断。"} --> |
 | 盖板 | Cover Plate |
 | 波节 | Wave Node |
-| 弯管 | Bend Duct |
 | 锥管 | Cone Duct |
 | 螺柱 | Stud |
 | 套管 | Sleeve |
@@ -262,7 +259,7 @@
 | 泄放阀 | Dump Valve |
 | 排气 | Exhaust |
 | 内筒 | Thimble |
-| 膨胀仓 | Expansion Hopper |
+| 膨胀仓 | Expansion Hopper <!-- {"aliases":["Expansion Chamber"],"context":"料仓语境；若为膨胀腔体而非料仓，应使用 Expansion Chamber。"} --> |
 | 调节环 | Adjustment Ring |
 | 闷盖 | Blind Cover |
 | 卡环 | Clip Ring |
@@ -270,7 +267,6 @@
 | 内锤盘 | Inner Hammer disk |
 | 门框 | Door Frame |
 | 篦条 | Great Bar |
-| 篦板 | Grate |
 | 篦条孔板 | Grate Perforated Plate |
 | 篦板体 | Grate Body |
 | 钢套 | Steel Sleeve |
@@ -316,10 +312,10 @@
 | 看火平台 | Burner’s Platform (Kiln attendant’s Platform) |
 | 鼓风机性能 | Blower (fan) Performance |
 | 右（左）前底座 | Front Right (Left) Baseplate |
-| 挡轮管路系统 | Pipe System of Thrust Roller |
+| 挡轮管路系统 | Pipe System of Thrust Roller <!-- {"aliases":["Thrust Roller Oil Pipeline"],"context":"默认挡轮管路总称；明确为油路时使用 Thrust Roller Oil Pipeline。"} --> |
 | 液压缸护罩 | Hydraulic Cylinder Guard |
 | （物料）在窑内停留时间 | Kiln Residence Time |
-| 气动管路系统 | Pneumatic Pipe System |
+| 气动管路系统 | Pneumatic Piping System <!-- {"aliases":["Pneumatic Pipe System"],"context":"气动管路系统；Pipe System 为原词表替代写法。"} --> |
 | 摩擦系数 | Coefficient of Friction |
 | 半环槽 | Semi-circular Groove |
 | 浇注耐火材料 | Castable Refractory |
@@ -366,16 +362,14 @@
 | 行程开关压板 | Limit Switch Clamp Plate |
 | 紧固圈 | Clipping Ring (Tighten Ring) |
 | 活塞杆 | Piston Rod |
-| 气动管路系统 | Pneumatic Piping System |
 | 挡轮 | Thrust Roller (Check Wheel) |
 | 轮毂 | Wheel Hub |
 | 窑尾密封装置 | Kiln Inlet Sealing Device |
 | 端盖孔盖 | Hole Cover of End Cover |
-| 轴衬 | Bush of Shaft |
+| 轴衬 | Shaft Bush <!-- {"aliases":["Bush of Shaft"],"context":"轴用衬套；Bush of Shaft 为原词表同义写法。"} --> |
 | 液压挡轮主体 | Hydraulic Thrust Roller Body |
 | 顶丝底 | Adjusting Screw Supporter |
 | 悬耳 | Suspension |
-| 窑头密封装置 | Seal Unite of Kiln Hood |
 | 锁紧螺母 | Locking Nut |
 | 齿轮罩壳 | Gear Housing |
 | 弹性密封板（环） | Spring Seal Plate (Ring) |
@@ -414,7 +408,7 @@
 | 衬瓦 | Liner |
 | 液压钢 | Hydraulic Cylinder |
 | 顶块 | Pushing Block |
-| 附件 | Accessories |
+| 附件 | Accessories <!-- {"aliases":["Fitting"],"context":"通用附件；管路接头或管件语境可用 Fitting。"} --> |
 | 端盖 | End Cover |
 | 调节螺旋 | Adjusting Screw |
 | 支轴 | Supporting Shaft |
@@ -423,10 +417,10 @@
 | 煅烧过程 | Burning process |
 | 定心轴 | Centering Shaft |
 | 轴承罩 | Bearing Cup |
-| 窑头罩 | Kiln hood |
+| 窑头罩 | Kiln hood <!-- {"aliases":["Burner hood","Firing hood"],"context":"默认窑头罩；Burner hood 或 Firing hood 仅用于对应燃烧器或燃烧区罩体语境。"} --> |
 | 固定磨擦环 | Fixed Friction Ring |
 | 窑衬厚度 | Lining Thickness |
-| 油路系统 | Oil System |
+| 油路系统 | Oil System <!-- {"aliases":["Oil Pipeline System"],"context":"油路系统总称；只描述输油管线时可用 Oil Pipeline System。"} --> |
 | 支耳 | Support |
 | 迷宫密封圈 | Labyrinth Seal Ring |
 | 顶丝 | Adjusting screw |
@@ -467,11 +461,10 @@
 | 重锤杆 | Weighting Rod |
 | 导轨 | Slideway |
 | 球面螺钉 | Sphere-Head Screw |
-| 冷却风管 | Cooling Air Pipe |
+| 冷却风管 | Cooling Duct <!-- {"aliases":["Cooling Air Pipe"],"context":"默认冷却风道；小截面管式构件可用 Cooling Air Pipe。"} --> |
 | 间隔环 | Space Block |
 | 本孔 | Hole |
 | 上壳体 | Housing Upper Part |
-| 垫板 | Supporting Block |
 | 滑杆 | Sliding Rod |
 | 滚子 | Roller |
 | 下壳体 | Housing Lower Part |
@@ -480,7 +473,6 @@
 | 筋板 | Rib Plate |
 | 轴孔图 | Shaft-hole Drawing |
 | 冷却喷管 | Cooling Air Spout |
-| 隔套 | Spaced Shell |
 | 漏斗 | Funnel |
 | 压头 | Compression Head |
 | 右窑门 | Right Kiln Door |
@@ -504,7 +496,7 @@
 |---|---|
 | 刮油橡胶 | Rubber Oil Scraper |
 | 链幕 | Curtain of Chains |
-| 滚轮 | Roller Wheel |
+| 滚轮 | Roller <!-- {"aliases":["Roller Wheel"],"context":"默认滚动支承件；明确轮形结构时可用 Roller Wheel。"} --> |
 | 罩孔盖 | Hole Cover |
 | 外型尺寸 | Overall Dimension |
 | 压力件 | Pressure Element |
@@ -523,7 +515,6 @@
 | 滴管 | Dropper(Drip Tube) |
 | 承压轮 | Supporting Roller |
 | 松料刮板板体 | Material-loosing Scraping Plate Part |
-| 轴衬 | Shaft Bush |
 | 防尘盖 | Dust-proof Cover |
 | 电池离合减速器 | Reducer with Electromagnetic Clutch |
 | 挡轮组 | Retaining Roller Group |
@@ -588,7 +579,7 @@
 | 电缆控制器 | Cable Controller |
 | 操作室 | Operation Room |
 | 小车车体 | Vehicle Body |
-| 联轴器 | Coupling |
+| 联轴器 | Coupling <!-- {"aliases":["Shaft Coupling"],"context":"轴系联接构件；需强调轴联接时可用 Shaft Coupling。"} --> |
 | 滑轮支撑座 | Blind Cover |
 | 内链板 | Inner Chain Plate |
 | 油标座 | Oil Leveler Seat |
@@ -598,7 +589,6 @@
 | 轴承盖 | Bearing Cover |
 | 下导轨 | Lower Track |
 | 涡轮减速器 | Worm Reducer |
-| 压板 | Clamping Pipe |
 | 注油管 | Oil Filling Pipe |
 | 滑块架 | Slide Frame |
 | 电刷架 | Brush Frame |
@@ -648,18 +638,15 @@
 | 固定环 | Fixing Ring |
 | 挡板 | Retain Plate |
 | 斜撑杆 | Oblique Rod |
-| 隔套 | Interval Shell |
 | 电机支架 | Motor Frame |
 | 安全罩 | Safety Guard |
 | 端梁 | End Beam |
 | 油针 | Oil Pin |
 | 挂钩 | Hook |
-| 滚轮 | Roller |
 | 支架 | Frame |
 | 座板 | Seat Plate |
 | 油圈 | Oil Ring |
 | 套筒 | Sleeve |
-| 油箱 | Oil Plug |
 | 滑板 | Slid Plate |
 | 吊架 | Hanger |
 | 油塞 | Oil Plug |
@@ -773,7 +760,6 @@
 | 压铸 | Die Casting |
 | 刨边机 | Edge Planer |
 | 离心浇铸 | Spun Casting |
-| 附件 | Fitting |
 | 剪切机 | Shearer |
 | 带锯 | Gig Saw / Band saw |
 | 砂眼、气孔 | Abscess |
@@ -826,7 +812,6 @@
 | 隔板 | Partition Board |
 | 油浸石棉盘根 | Oiled Asbest-packing |
 | 内六角头 | Hexagon Socket Head |
-| 护套 | Shield (Shelter) |
 | 基础图 | Foundation Drawing |
 | 标准件、材料 | Standard Materials |
 | 窥视窗 | Inspection window |
@@ -837,7 +822,7 @@
 | 密封垫圈 | Seal Pad (Seal Sheet) |
 | 型钢 | Profile (Section Steel) |
 | 石棉橡胶板 | Asbest-rubber Plate |
-| 散装水泥 | Cement in Bulk (Bulk Cement) |
+| 散装水泥 | Bulk cement <!-- {"aliases":["Cement in Bulk (Bulk Cement)"],"context":"散装交付形态；Cement in Bulk 为同义表达。"} --> |
 | 径向跳动 | Diameter Runout |
 | 水泥强度 | Cement Strength |
 | 预留孔 | Provided Hole (Preset Hole) |
@@ -852,7 +837,7 @@
 | 扫描仪 | Sweep Chanalyst |
 | 旋转剖视 | Aligned Sections |
 | 杂质 | Impurity (Tramp) |
-| 钢丝绳 | Steel Wire Rope |
+| 钢丝绳 | Steel Wire Rope <!-- {"aliases":["Wire Rope"],"context":"明确钢材质；上下文已经明确材质时可用 Wire Rope。"} --> |
 | 中心距 | Center to Center |
 | 均布 | Equally Spaced |
 | 压缩空气 | Compressed Air |
@@ -870,7 +855,6 @@
 | 开口弹簧圈 | External Circlip |
 | 表列数据 | Catalogue Data |
 | 俯视图 | Birds-eye View |
-| 联轴器 | Shaft Coupling |
 | 布氏硬度值 | Brinell Figure |
 | 槽体 | Channel Body |
 | 硫化钼 | Molybdenum |
@@ -954,7 +938,6 @@
 | 有机玻璃 | Plexiglas |
 | 公差 | Tolerance |
 | 毛刺 | Burr |
-| 卡箍 | Lathe Dog |
 | 双头螺栓 | Stud Bolt |
 | 厚度 | Thickness |
 | 轮廓、草图 | Delineation |
@@ -993,22 +976,18 @@
 | 网纹板 | Chequer Plate |
 | 蓄电池 | Accumulator |
 | 锥度 | Taper |
-| 钢丝绳 | Wire Rope |
 
 ## 技术要求中的设备与部件名称（第 9 页）
 
 | 中文术语 | English |
 |---|---|
 | 上升风管 | Duct |
-| 下料管 | Feed Pipe |
-| 膨胀仓 | Expansion Chamber |
 | 烟室 | Smoke Chamber |
 
 ## 技术要求中的设备与部件名称（第 10 页）
 
 | 中文术语 | English |
 |---|---|
-| 冷却风管 | Cooling Duct |
 | 筒体 | Kiln Shell Assembly |
 | 带挡轮支承装置 | Supporting Unit With Thrust Roller |
 
@@ -1023,14 +1002,12 @@
 | 中文术语 | English |
 |---|---|
 | 大齿轮 | Gear Rim Unit |
-| 挡轮管路系统 | Thrust Roller Oil Pipeline |
 
 ## 技术要求中的设备与部件名称（第 13 页）
 
 | 中文术语 | English |
 |---|---|
 | 窑头密封 | Seal Unit of Kiln Outlet |
-| 油路系统 | Oil Pipeline System |
 
 ## 技术要求中的设备与部件名称（第 14 页）
 
@@ -1058,9 +1035,6 @@
 
 | 中文术语 | English |
 |---|---|
-| 撒料箱 | Dispersion Box |
-| 撒料板 | Dispersion Plate |
-| 电动分料阀 | Electric Dividing Valve |
 | 轴承座 | Bearing Seat |
 | 电动执行机构 | Electric Actuator |
 | 摇杆 | Swing Rod |
@@ -1126,13 +1100,10 @@
 | 盘式碾磨机 | Pan grinder |
 | 细粉磨磨机 | Finish mill |
 | 粉尘排量 | Dust emission |
-| 立磨 | Vertical roller mill |
 | 矿渣水泥 | Blast-furnace cement |
 | 辊磨 | Roller mill |
 | 仓式泵气送法 | Blow-egg method |
-| 散装水泥 | Bulk cement |
 | 烘干原料磨 | Raw material drying and grinding mill |
-| 水泥标号 | Cement mark |
 | 中心传动球磨机 | Center drive ball mill |
 | 水泥安定性 | Cement soundness |
 | 自磨机 | Autogenous mill |
@@ -1143,7 +1114,6 @@
 | 配料计量阀 | Proportioning gate |
 | 涡轮式空气选粉机 | Turbo air separator |
 | 磨机配料 | mill batch |
-| 离心式选粉机 | Centrifugal separator |
 | 看磨工 | mill attendant |
 | 固定鄂板 | Fixed jaw |
 | 闭路循环粉磨 | Closed-circuit grinding |
@@ -1182,7 +1152,6 @@
 | 分料溜子 | Distribution chute |
 | 对接焊 | butt welding |
 | 伸缩槽 | Telescopic chute |
-| 检修门 | Access door |
 | 焊透 | through welding |
 | 可调闸门 | Adjustable deflector |
 | 点固定焊 | tack welding |
@@ -1199,12 +1168,10 @@
 
 | 中文术语 | English |
 |---|---|
-| 生料均化库 | Raw meal homogenization silo |
 | 角片、夹板 | Cleat |
 | 弃料中间仓 | Reject intermediate bin |
 | 托砖圈 | brick retainer |
 | 原煤喂料仓 | Raw coal feed bin |
-| 托砖板 | brick holder |
 | 废料仓 | Scrap bin |
 | 腹板 | web |
 | 深槽裙式输送机 | Deep-pan apron conveyor |
@@ -1223,7 +1190,6 @@
 | 装/卸船机 | ship loader/unloader |
 | 气动槽输送机 | Pneumatic trough conveyor |
 | 特种水泥 | special cement |
-| 拉链机 | Flow chain conveyor |
 | 铝酸盐水泥熟料 | high alumina cement clinker |
 | 浆叶式螺旋输送机 | Paddle screw conveyor |
 | 硫铝酸盐水泥熟料 | sulphoaluminate cement clinker |
@@ -1289,17 +1255,15 @@
 | 槽形胶带 | Trough belt |
 | 栅格式风门 | Louver damper |
 | 皮带张紧轮 | Belt tensioner |
-| 棒型阀门 | Bar gate |
 | 输送槽 | Conveying trough |
 | 气动分料阀 | Pneumatic diverting valve |
 | 输送机走台 | Conveyor walkway |
 | 气动放风阀 | Pneumatic relief valve |
-| 扬料板 | Dispersing device/Lifter |
-| 手动闸板阀门 | Manual slide gate |
+| 手动闸板阀门 | Manual Slide Gate Valve |
 | 皮带跑偏监视器 | Off-line running monitor / skewing monitor |
 | 电动闸板阀 | Motorized slide gate |
 | （胶带机上）卸料车 | Tripper car |
-| 分料阀 | Distribution gate |
+| 分料阀 | Diverter Valve |
 | 回料皮带 | Return belt |
 | 负压收尘器 | Air suction filter |
 | 共振筛 | Resonance screen |
@@ -1313,7 +1277,6 @@
 | 抽风机 | Suction blower |
 | 柱式煅烧炉 | Cylindrical roaster |
 | 挡风板、（选粉机）压风板 | Air damper |
-| 窑头罩 | Burner hood |
 | 风道、烟道 | Air flue |
 | 窑头区 | Nose area |
 | （回转窑）冷烟室 | Air housing |
@@ -1353,14 +1316,11 @@
 | 生烧率 | Free lime content |
 | 窑头（高温端、出料端） | Hot end/kiln outlet |
 | 窑尾（低温端、进料端） | Cold end/kiln inlet |
-| 窑头罩 | Firing hood |
 | 液阻柜/液阻启动柜 | Liquid resistance starter (LRS) |
 | 顺包机 | Bag aligning conveyor |
 | 接包机 | Bag receiving conveyor |
 | 刷辊滚笼式清包输送机 | Brush roller cage bag cleaning conveyor |
 | 滚笼式接包输送机 | Roller cage bag receiving conveyor |
-| 轮带 | Rim band |
-| 扬料板 | Lifting board |
 | 仓式气力输送泵 | Bin-actuated pneumatic conveying pump |
 | 电动耐磨尘气蝶阀 | Electric wear-resistant butterfly valve for dust-laden gas |
 | 仓泵进、出料阀 | Discharge and feeding valve of blow tank |

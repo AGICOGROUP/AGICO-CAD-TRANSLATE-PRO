@@ -7,7 +7,8 @@ python scripts/cad_translate.py export --source "source.dwg" --job "jobs/bilingu
 python scripts/cad_translate.py prepare-translations --job "jobs/bilingual-001"
 # Review current-drawing inline candidates before confirming complete pairs:
 # python scripts/cad_translate.py prepare-translations --job "jobs/bilingual-001" --existing-inline-handles "AB,CD"
-# Write target-only translatedText to exchange/translated-batches/*.jsonl.
+# Consult references/cement-industry-glossary.md for current worklist terms (SKILL.md).
+# Write target-only translatedText to exchange/translated-batches/*.jsonl; review term consistency before assembly.
 python scripts/cad_translate.py assemble-translations --job "jobs/bilingual-001" --translated "jobs/bilingual-001/exchange/translated-batches"
 python scripts/cad_translate.py import --job "jobs/bilingual-001" --translations "jobs/bilingual-001/exchange/translations.output.jsonl"
 python scripts/cad_translate.py audit-summary --job "jobs/bilingual-001"

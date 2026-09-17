@@ -1,4 +1,4 @@
 interface:
-  display_name: "CAD Translate Pro"
+  display_name: "CAD-TRANSLATE-PRO"
   short_description: "Chinese-English CAD replacement or additive bilingual translation"
-  default_prompt: "Use $translate-cad-files with the user's requested language direction and output mode: replace source text, or preserve it and add nearby translation. Use the selected mode's independent pipeline and verification."
+  default_prompt: "Use $cad-translate-pro with the user's requested language direction and output mode: replace source text, or preserve it and add nearby translation. Use the selected mode's independent pipeline and verification."

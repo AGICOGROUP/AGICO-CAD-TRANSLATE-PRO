@@ -5,7 +5,8 @@ Replace original text with the requested target language. Preserve geometry, cod
 ```powershell
 python scripts/cad_translate.py export --source "source.dwg" --job "jobs/replace-001" --output-mode replace --source-language zh-CN --target-language en
 python scripts/cad_translate.py prepare-translations --job "jobs/replace-001"
-# Translate each worklist part to exchange/translated-batches/part-0001.jsonl, etc.
+# Consult references/cement-industry-glossary.md for current worklist terms (SKILL.md).
+# Translate each worklist part to exchange/translated-batches/part-0001.jsonl, etc.; review term consistency before assembly.
 python scripts/cad_translate.py assemble-translations --job "jobs/replace-001" --translated "jobs/replace-001/exchange/translated-batches"
 python scripts/cad_translate.py import --job "jobs/replace-001" --translations "jobs/replace-001/exchange/translations.output.jsonl"
 python scripts/cad_translate.py audit-summary --job "jobs/replace-001"
