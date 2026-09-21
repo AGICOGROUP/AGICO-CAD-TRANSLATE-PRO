@@ -16,7 +16,8 @@ public sealed record TextLayoutSnapshot(
     string Id,
     Rect2 Bounds,
     Point2 Anchor,
-    double OriginalTextHeight);
+    double OriginalTextHeight,
+    double WidthFactor = 1);
 
 public static class RegionAssigner
 {

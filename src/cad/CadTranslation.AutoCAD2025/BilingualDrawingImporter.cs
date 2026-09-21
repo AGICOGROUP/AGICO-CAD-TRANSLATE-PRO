@@ -108,6 +108,9 @@ internal static class BilingualDrawingImporter
         var tableCopies = new List<BilingualTableCopy.CopyReceipt>();
         var tableDecisions = new List<object>();
         BilingualTermGroups.Group[] termGroups = [];
+        // Kept as the live dictionary: later passes merge term-group bounds into it,
+        // and the post-save correction must plan against the merged values.
+        Dictionary<string, CadLayoutText>? correctionTopology = null;
         string output = context.Config.OutputPath;
         if (Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.SourcePath), StringComparison.OrdinalIgnoreCase) ||
             Path.GetFullPath(output).Equals(Path.GetFullPath(context.Config.WorkingPath), StringComparison.OrdinalIgnoreCase))
@@ -153,6 +156,7 @@ internal static class BilingualDrawingImporter
                         return t;
                     }).ToArray() }).ToArray() };
                 var topology = baseline.Definitions.SelectMany(d => d.Texts).ToDictionary(t => t.RecordId);
+                correctionTopology = topology;
                 if (context.Config.SourceLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase) &&
                     (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) ||
                      context.Config.TargetLanguage.StartsWith("fr", StringComparison.OrdinalIgnoreCase)))
@@ -340,22 +344,42 @@ internal static class BilingualDrawingImporter
         NativeDrawing.Report(context, "bilingual-unresolved.json", unresolvedDetails);
         NativeDrawing.Report(context, "bilingual-table-layout.json", new { tables = tableDecisions, copies = tableCopies });
         NativeDrawing.Report(context, "bilingual-placement-limits.json", placementLimits);
-        return VerifySaved(context, manifest, translated, pairs, unresolved, tableCopies, placementLimits, issues);
+        return VerifySaved(context, manifest, translated, pairs, unresolved, tableCopies, placementLimits, issues,
+            correctionTopology?.Values);
     }
 
     internal static int VerifySaved(JobContext context, ManifestRecord[] manifest,
         IReadOnlyDictionary<string, TranslationRecord> translated, IReadOnlyList<Pair> pairs,
         IReadOnlyCollection<string> unresolved, IReadOnlyList<BilingualTableCopy.CopyReceipt> tableCopies,
-        IReadOnlyDictionary<string, Rect2> placementLimits, List<CadObjectAccess.Issue> issues)
+        IReadOnlyDictionary<string, Rect2> placementLimits, List<CadObjectAccess.Issue> issues,
+        IEnumerable<CadLayoutText>? topology = null)
     {
         string output = context.Config.OutputPath;
         // Reopen saved DWG before proving source retention and target associations.
         ManifestRecord[] candidate = [];
         BilingualSavedLayoutReview.Risk[] layoutRisks = [];
+        // Additive placement can only see the source rows that existed before the
+        // candidate was written, so a long line may still land on dimension text.
+        // Measure the saved file, steer those additions clear, save again, and only
+        // then audit: an audit without a repair pass reports the defect it could fix.
+        var planned = Array.Empty<BilingualCollisionCorrection.Correction>();
+        var applied = Array.Empty<BilingualCollisionCorrection.Correction>();
         NativeDrawing.ExportCandidate(context, db => {
             candidate = NativeDrawing.ReadRows<ManifestRecord>(Path.Combine(context.Config.ArtifactDirectory, "bilingual-candidate.jsonl"));
             layoutRisks = BilingualSavedLayoutReview.MeasureAndInspect(db, pairs, candidate, placementLimits, issues);
+            if (topology is null || layoutRisks.Length == 0) return;
+            planned = BilingualCollisionCorrection.Plan(db, pairs, candidate, topology, placementLimits, issues);
+            applied = BilingualCollisionCorrection.ApplyMoves(db, planned, issues);
+            if (applied.Length > 0) NativeDrawing.Save(db, output);
         });
+        if (applied.Length > 0) NativeDrawing.ExportCandidate(context, db => {
+            candidate = NativeDrawing.ReadRows<ManifestRecord>(Path.Combine(context.Config.ArtifactDirectory, "bilingual-candidate.jsonl"));
+            layoutRisks = BilingualSavedLayoutReview.MeasureAndInspect(db, pairs, candidate, placementLimits, issues);
+        });
+        NativeDrawing.Report(context, "bilingual-collision-plan.json", new {
+            measured = layoutRisks.Length, planned = planned.Length, applied = applied.Length,
+            corrections = applied.Select(c => new { c.RecordId, c.TargetHandle, c.Method, c.Factor,
+                c.OffsetX, c.OffsetY, before = c.Previous, planned = c.Planned }).ToArray() });
         var candidateByHandle = candidate.ToDictionary(r => r.Handle, StringComparer.OrdinalIgnoreCase);
         var changedSources = manifest.Where(r => !candidateByHandle.TryGetValue(r.Handle, out var current)
                 ? translated[r.RecordId].TranslatedText != r.FormatTemplate
@@ -427,6 +451,29 @@ internal static class BilingualDrawingImporter
             occupied[target].AddRange(InstanceOccupancyProjection.Project(bounds, definition, target, instances));
     }
 
+    // Added text inherits the source's character spacing: a drawing whose Chinese
+    // sits at W0.7 must not gain English at W1, which reads ~43% looser and pushes
+    // labels into their neighbours. The ladder may only condense below the source
+    // factor to fit, never widen past it.
+    private static double SourceWidthFactor(CadLayoutText source)
+    {
+        double factor = source.Source.WidthFactor;
+        return factor is > 0.05 and <= 4 ? factor : 1;
+    }
+
+    private static double[] WidthLadder(CadLayoutText source)
+    {
+        double first = SourceWidthFactor(source);
+        var ladder = new List<double> { first };
+        foreach (double step in new[] { 0.8, 0.65, 0.5, 0.4, 0.3 })
+            if (step < first - 1e-9 && !ladder.Contains(step)) ladder.Add(step);
+        return ladder.ToArray();
+    }
+
+    private static string WidthContents(CadLayoutText source, string contents, double ceiling) =>
+        "{\\W" + Math.Min(SourceWidthFactor(source), ceiling).ToString(CultureInfo.InvariantCulture) +
+        ";" + contents + "}";
+
     private static bool Place(MText text, string contents, CadLayoutText source, CadDefinitionTopology definition,
         List<Rect2> occupied, double z, out Rect2 result, out double usedScale, BilingualPlacementTrace? trace = null,
         bool titleField = false)
@@ -459,11 +506,11 @@ internal static class BilingualDrawingImporter
         if (TryCloseLabel(text, contents, source, definition, allowed, occupied, z, out result, out usedScale, trace)) return true;
         if (TryNearbyGrid(text, contents, source, definition, allowed, occupied, z, out result, out usedScale, trace)) return true;
         foreach (double scale in BilingualPlacementPolicy.HeightScales)
-        foreach (double widthFactor in new[] { 1.0, .8, .65, .5, .4 })
+        foreach (double widthFactor in WidthLadder(source))
         {
             text.TextHeight = height * scale;
             text.Width = 0;
-            text.Contents = "{\\W" + widthFactor.ToString(CultureInfo.InvariantCulture) + ";" + contents + "}";
+            text.Contents = WidthContents(source, contents, widthFactor);
             double unwrappedWidth = Math.Max(text.TextHeight, text.ActualWidth) * 1.05;
             foreach (double width in BilingualPlacementPolicy.CandidateWidths(BilingualPlacementChecks.AlongText(allowed, text.Rotation), BilingualPlacementChecks.AlongText(box, text.Rotation), height, unwrappedWidth))
             {
@@ -501,7 +548,7 @@ internal static class BilingualDrawingImporter
             double scale = LayoutFitPolicy.EmergencyMinimumHeightScale;
             text.TextHeight = height * scale;
             text.Width = Math.Max(height, Math.Min(allowed.Width, height * 4));
-            text.Contents = "{\\W0.4;" + contents + "}";
+            text.Contents = WidthContents(source, contents, 0.4);
             Rect2 footprint = BilingualPlacementChecks.Footprint(text);
             double w = footprint.Width, h = footprint.Height;
             double margin = Math.Min(height * .035, Math.Min(allowed.Width, allowed.Height) * .04);
@@ -540,7 +587,7 @@ internal static class BilingualDrawingImporter
         // clear space just beyond an obstacle beside the source.
         foreach (double scale in new[] {1.0, .7})
         {
-            text.TextHeight = height * scale; text.Width = 0; text.Contents = "{\\W1;" + contents + "}";
+            text.TextHeight = height * scale; text.Width = 0; text.Contents = WidthContents(source, contents, 1.0);
             Rect2 footprint = BilingualPlacementChecks.Footprint(text);
             double w = footprint.Width, h = footprint.Height;
             if (!(w > 0 && h > 0) || w > allowed.Width || h > allowed.Height) continue;
@@ -593,7 +640,7 @@ internal static class BilingualDrawingImporter
             foreach (double factor in new[] {1.0,.8})
             {
                 text.TextHeight=height*scale;
-                text.Contents="{\\W"+factor.ToString(CultureInfo.InvariantCulture)+";"+contents+"}";
+                text.Contents=WidthContents(source, contents, factor);
                 text.Width=0;
                 double unwrapped=Math.Max(height,text.ActualWidth)*1.02;
                 // Source width is not available whitespace. Try broad two-line fits
@@ -652,7 +699,7 @@ internal static class BilingualDrawingImporter
         foreach(double scale in new[]{.45,.35,.30,.25})
         foreach(double width in new[]{along,along*.5,along*.35}.Select(w=>Math.Max(height,w)).Distinct())
         {
-            text.TextHeight=height*scale; text.Width=width; text.Contents="{\\W0.8;"+contents+"}";
+            text.TextHeight=height*scale; text.Width=width; text.Contents=WidthContents(source, contents, 0.8);
             var fp=BilingualPlacementChecks.Footprint(text);
             double left=Math.Max(allowed.Left,box.Left-reach-fp.Width), right=Math.Min(allowed.Right-fp.Width,box.Right+reach);
             double bottom=Math.Max(allowed.Bottom,box.Bottom-reach-fp.Height), top=Math.Min(allowed.Top-fp.Height,box.Top+reach);
@@ -690,7 +737,7 @@ internal static class BilingualDrawingImporter
         foreach (double factor in new[] {.8,.5})
         {
             text.TextHeight=height*scale; text.Width=0;
-            text.Contents="{\\W"+factor.ToString(CultureInfo.InvariantCulture)+";"+contents+"}";
+            text.Contents=WidthContents(source, contents, factor);
             double unwrapped=Math.Max(text.TextHeight,text.ActualWidth)*1.05;
             foreach (double width in BilingualPlacementPolicy.CandidateWidths(BilingualPlacementChecks.AlongText(allowed,text.Rotation),BilingualPlacementChecks.AlongText(source.Source.Bounds,text.Rotation),height,unwrapped))
             {

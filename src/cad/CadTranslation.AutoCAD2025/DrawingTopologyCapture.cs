@@ -338,7 +338,8 @@ internal static class DrawingTopologyCapture
                         recordId,
                         bounds.Value,
                         new Point2(anchor.X, anchor.Y),
-                        Math.Max(dbText.Height, 1e-6)),
+                        Math.Max(dbText.Height, 1e-6),
+                        ClampWidthFactor(dbText.WidthFactor)),
                     dbText.HorizontalMode == TextHorizontalMode.TextLeft);
                 return true;
             case MText mText when bounds is not null:
@@ -353,7 +354,8 @@ internal static class DrawingTopologyCapture
                         recordId,
                         bounds.Value,
                         new Point2(mText.Location.X, mText.Location.Y),
-                        Math.Max(mText.TextHeight, 1e-6)),
+                        Math.Max(mText.TextHeight, 1e-6),
+                        ManifestWidthFactor(input)),
                     mText.Attachment is AttachmentPoint.TopLeft or
                         AttachmentPoint.MiddleLeft or
                         AttachmentPoint.BottomLeft);
@@ -365,7 +367,7 @@ internal static class DrawingTopologyCapture
                 Rect2 dimBounds = TextBoundsEstimator.Estimate(new Point2(position.X, position.Y), dimHeight, 1,
                     input.Manifest.PlainText, "TextCenter", "TextVerticalMid", input.Manifest.Geometry.RotationRadians);
                 text = (entity.ObjectId, recordId, entity.GetRXClass().Name, input.Manifest.RawText, candidate,
-                    input.IsChanged, new TextLayoutSnapshot(recordId, dimBounds, new Point2(position.X, position.Y), dimHeight), false);
+                    input.IsChanged, new TextLayoutSnapshot(recordId, dimBounds, new Point2(position.X, position.Y), dimHeight, ManifestWidthFactor(input)), false);
                 return true;
             case Entity value when input is not null && bounds is not null:
                 text = (
@@ -379,7 +381,8 @@ internal static class DrawingTopologyCapture
                         recordId,
                         bounds.Value,
                         bounds.Value.Center,
-                        Math.Max(input.Manifest.Properties.Height, 1e-6)),
+                        Math.Max(input.Manifest.Properties.Height, 1e-6),
+                        ManifestWidthFactor(input)),
                     string.Equals(
                         input.Manifest.Properties.HorizontalMode,
                         "TextLeft",
@@ -390,6 +393,15 @@ internal static class DrawingTopologyCapture
                 return false;
         }
     }
+
+    // A translation must be drawn at the source's own character spacing, so the
+    // factor has to survive the topology hand-off. Only a physically meaningful
+    // factor is passed through; anything else falls back to normal width.
+    private static double ClampWidthFactor(double factor) =>
+        factor is > 0.05 and <= 4 ? factor : 1;
+
+    private static double ManifestWidthFactor(LayoutWriteInput? input) =>
+        ClampWidthFactor(input?.Manifest.Properties.WidthFactor ?? 1);
 
     private static Rect2? EstimateManifestBounds(LayoutWriteInput? input)
     {

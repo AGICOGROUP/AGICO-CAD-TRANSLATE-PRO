@@ -9,10 +9,7 @@ namespace CadTranslation.AutoCAD2025;
 
 internal static partial class LogicalFlowPrototype
 {
-    // Dense note columns must be allowed to shrink to the agreed readability floor;
-    // at 0.50 long English bodies fail ShouldReplace and leave the column with
-    // skipped replacements and overlapping fragments.
-    private const double MinimumBodyScale = 0.25;
+    private const double MinimumBodyScale = 0.50;
 
     internal static int Run(JobContext context)
     {
