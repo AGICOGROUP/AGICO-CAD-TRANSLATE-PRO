@@ -66,14 +66,14 @@ public class TablePlacementTests
             var decisions=new List<object>();var slots=new Dictionary<string,BilingualGroupLayout.Slot>();
             var ids=new HashSet<string>();var blocked=new HashSet<string>();
             var handled=BilingualTableCopy.Apply(db,tx,baseline,inputs.ToArray(),occupied,"en",pairs,receipts,decisions,slots,ids,blocked);
-            Require(slots.Count==4,"All four roomy description cells must keep a right-hand inline translation: "+JsonSerializer.Serialize(new{slots,decisions,blocked},JsonDefaults.Options));
-            Require(slots.All(p=>p.Value.Strategy=="table-inline-right" && p.Value.Bounds.Left>texts.Single(t=>t.RecordId==p.Key).Source.Bounds.Right),"Inline targets must follow their source.");
-            Require(handled.Count==0 && blocked.Count==0 && receipts.Count==0,
-                "Recognized title fields must stay local, not compete with the roomy schedule or copy as another table.");
+            Require(slots.Count==0 && handled.Count==(blockAll?4:8) && blocked.Count==(blockAll?4:0) && receipts.Count>8,
+                "Both the roomy schedule and the title panel must be copied completely: "+JsonSerializer.Serialize(new{slots,handled,decisions,blocked},JsonDefaults.Options));
             foreach(var copy in receipts)
             {
-                Require(copy.Table==new Rect2(0,0,100,25),"The full merged title panel must be copied, not just a repeated row-height subset.");
-                Require((copy.Dx==0) != (copy.Dy==0),"The copy must use one axis, never a diagonal.");
+                Require(copy.Table==new Rect2(0,0,100,25) || copy.Table==new Rect2(0,25,100,65),
+                    "Copy complete title/schedule units at real cell boundaries.");
+                bool aligned = (copy.Dx==0) != (copy.Dy==0);
+                Require(aligned,"Copies must remain directly aligned beside or above/below their source tables.");
             }
             foreach(var source in texts)
                 Require(((MText)tx.GetObject(source.ObjectId,OpenMode.ForRead)).Contents==inputs.Single(i=>i.ObjectId==source.ObjectId).Manifest.RawText,"Source text changed.");
@@ -98,7 +98,7 @@ public class TablePlacementTests
                 var nextOccupied=nextBaseline.Definitions.ToDictionary(d=>d.Name,d=>d.Texts.Select(t=>t.Source.Bounds).ToList());
                 var nextCopies=new List<BilingualTableCopy.CopyReceipt>();var nextSlots=new Dictionary<string,BilingualGroupLayout.Slot>();
                 BilingualTableCopy.Apply(db,tx,nextBaseline,inputs.ToArray(),nextOccupied,"en",new(),nextCopies,new(),nextSlots,new(),new());
-                Require(nextCopies.Count==0 && nextSlots.Count==0,"A second pass must reuse both the inline text and the translated table without duplication.");
+                Require(nextCopies.Count==0 && nextSlots.Count==0,"A second pass must reuse the complete translated tables without duplication.");
             }
             tx.Commit();
             string output=Path.Combine(Path.GetDirectoryName(report)!,blockAll?"blocked.dwg":"table-strategies.dwg");

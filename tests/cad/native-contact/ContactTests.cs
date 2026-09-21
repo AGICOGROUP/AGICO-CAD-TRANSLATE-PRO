@@ -43,7 +43,7 @@ public class ContactTests
                     var occupied=baseline.Definitions.SelectMany(d=>d.Texts.SelectMany(t=>d.Name==source.DefinitionName
                         ? new[]{t.Source.Bounds}:InstanceOccupancyProjection.Project(t.Source.Bounds,d.Name,source.DefinitionName,baseline.BlockInstances))).ToList();
                     var trace=new BilingualPlacementTrace();
-                    object?[] args={text,pair.TargetText,source,definitions[source.DefinitionName],occupied,row.Geometry.InsertionPoint.Z,source.Source.Bounds,0d,trace};
+                    object?[] args={text,pair.TargetText,source,definitions[source.DefinitionName],occupied,row.Geometry.InsertionPoint.Z,source.Source.Bounds,0d,trace,false};
                     bool placed=(bool)typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,args)!;
                     var trials=new List<object>();
                     var def=definitions[source.DefinitionName];
@@ -89,7 +89,7 @@ public class ContactTests
             var definition = new CadDefinitionTopology("model","1",[],[],[source],[]);
             var occupied = new List<Rect2> { box, new(-100,-8,0,100), new(10,-8,100,100), new(0,3.5,10,100) };
             var method = typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
-            object?[] args = {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            object?[] args = {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace(),false};
             bool placed = (bool)method.Invoke(null,args)!;
             var result = (Rect2)args[6]!;
             Assert(placed && text.Text == contents && text.TextHeight >= 1.05 - 1e-9 &&
@@ -99,14 +99,14 @@ public class ContactTests
             // A wide source caption can sit above a narrower free pocket.
             const string narrowContents = "Air and Gas Flow Control Room";
             occupied = new List<Rect2> { box, new(-100,-16,0,100), new(7.5,-16,100,0), new(10,0,100,100), new(0,3.5,10,100) };
-            args = new object?[] {text,narrowContents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            args = new object?[] {text,narrowContents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace(),false};
             placed = (bool)method.Invoke(null,args)!;
             var narrow = (Rect2)args[6]!;
             Assert(placed && narrow.Top >= -3 && narrow.Left >= .35 && narrow.Right <= 7.15 &&
                 text.TextHeight >= 1.05-1e-9 && text.Text == narrowContents,
                 $"wrap to the available pocket, not just the source caption width: {narrow}");
             Assert(occupied.All(o=>!BilingualDrawingImporter.Intersects(narrow,o,.35)),"narrow placement retains obstacle clearance");
-            args = new object?[] {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace()};
+            args = new object?[] {text,contents,source,definition,occupied,0d,box,0d,new BilingualPlacementTrace(),false};
             placed = (bool)method.Invoke(null,args)!;
             var condensed = (Rect2)args[6]!;
             Assert(placed && condensed.Top>=-3 && condensed.Left>=.35 && condensed.Right<=7.15 &&
@@ -265,9 +265,13 @@ public class ContactTests
     }
 
     [CommandMethod("CAD_BILINGUAL_REVIEW_TEST")]
-    public void ReviewExisting()
+    public void ReviewExisting() => NativeTestCommand.Execute(ReviewExistingCore);
+
+    private static object ReviewExistingCore()
     {
-        string job=Environment.GetEnvironmentVariable("CAD_LAYOUT_REVIEW_JOB")!;
+        string job = Environment.GetEnvironmentVariable("CAD_LAYOUT_REVIEW_JOB") ?? "";
+        if (string.IsNullOrWhiteSpace(job) || !Path.IsPathFullyQualified(job) || !Directory.Exists(job))
+            throw new InvalidOperationException("CAD_LAYOUT_REVIEW_JOB must name an existing absolute job directory.");
         using var config=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"config/export-job.json")));
         using var report=System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(job,"artifacts/bilingual-pairs.json")));
         var pairs=System.Text.Json.JsonSerializer.Deserialize<BilingualDrawingImporter.Pair[]>(report.RootElement.GetProperty("pairs").GetRawText(),CadTranslation.Contracts.JsonDefaults.Options)!;
@@ -283,8 +287,8 @@ public class ContactTests
         {
             HostApplicationServices.WorkingDatabase=db;
             var risks=BilingualSavedLayoutReview.MeasureAndInspect(db,pairs,rows,new Dictionary<string,Rect2>(),new List<CadObjectAccess.Issue>());
-            File.WriteAllText(Environment.GetEnvironmentVariable("CAD_CONTACT_TEST_REPORT")!,System.Text.Json.JsonSerializer.Serialize(new {risks,
-                scope="Regression-only replay of saved text bounds; does not recheck original placement regions or approve delivery"},CadTranslation.Contracts.JsonDefaults.Options));
+            return new {status="passed", risks,
+                scope="Regression-only replay of saved text bounds; does not recheck original placement regions or approve delivery"};
         }
         finally { HostApplicationServices.WorkingDatabase=previous; }
     }
@@ -313,7 +317,7 @@ public class ContactTests
             BilingualLocalSearch();
             BatchDiagnostic();
             ReadableNearby();
-            EmergencyCannotCrossBoundaries();
+            BilingualCanCrossLinesButNotText();
             RotatedLocalSearch();
             using var wide = new Polyline();
             wide.AddVertexAt(0,new Point2d(0,0),0,4,4);
@@ -368,7 +372,7 @@ public class ContactTests
         }
     }
 
-    private static void EmergencyCannotCrossBoundaries()
+    private static void BilingualCanCrossLinesButNotText()
     {
         using var text=new MText(); text.SetDatabaseDefaults(); text.Attachment=AttachmentPoint.TopLeft;
         var box=new Rect2(0,0,3,3); var cell=new LayoutRegion("cell",LayoutRegionKind.TableCell,new Rect2(-1,-1,10,5));
@@ -378,10 +382,13 @@ public class ContactTests
         var definition=new CadDefinitionTopology("model","1",lines,new[]{cell},new[]{source},Array.Empty<CadProtectedGeometry>());
         var place=typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
         var trace=new BilingualPlacementTrace();
-        object[] args={text,"Pump",source,definition,new List<Rect2>{box},0d,box,0d,trace};
-        Assert(!(bool)place.Invoke(null,args)!,"emergency placement must not bypass boundary checks after normal candidates failed");
-        Assert(trace.Counts.GetValueOrDefault("boundary-crossing")>0 && trace.Examples.Count<=18 && trace.Examples.Any(e=>e.Boundary is not null),
-            "failed placement must retain bounded rejection evidence rather than just a generic failure");
+        object[] args={text,"Pump",source,definition,new List<Rect2>{box},0d,box,0d,trace,false};
+        Assert((bool)place.Invoke(null,args)!,"Drawing lines must not block a bilingual label.");
+        Assert(!BilingualDrawingImporter.Intersects((Rect2)args[6],box,.36),"A label must avoid original text even when crossing lines.");
+        args[4]=new List<Rect2>{new(-1000,-1000,1000,1000)};
+        Assert(!(bool)place.Invoke(null,args)!,"Real text occupancy must still block all placement candidates.");
+        Assert(trace.Counts.GetValueOrDefault("text-overlap")>0 && trace.Examples.Count<=18,
+            "Failed text clearance must retain bounded rejection evidence.");
     }
 
     private static void ReadableNearby()
@@ -393,7 +400,7 @@ public class ContactTests
         var definition=new CadDefinitionTopology("model","1",Array.Empty<Segment2>(),Array.Empty<LayoutRegion>(),
             new[]{source},Array.Empty<CadProtectedGeometry>());
         var place=typeof(BilingualDrawingImporter).GetMethod("Place",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!;
-        object?[] args={text,"Water Pump",source,definition,new List<Rect2>{box},0d,box,0d,null};
+        object?[] args={text,"Water Pump",source,definition,new List<Rect2>{box},0d,box,0d,null,false};
         Assert((bool)place.Invoke(null,args)! && text.TextHeight>=2.1 && text.Text=="Water Pump" &&
             !BilingualDrawingImporter.Intersects((Rect2)args[6],box,.36),
             "open nearby space must retain a larger complete translation without touching source text");

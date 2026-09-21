@@ -16,12 +16,16 @@ public class NestedGridTableCopyTests
         try
         {
             var pure = Check(report, false);
+            var crossingEquipment = Check(report, false, crossingEquipment: true);
             var mixed = Check(report, true);
             var whollyNested = Check(report, false, true);
             var onePending = Check(report, false, false, true);
             var framed = Check(report, false, false, false, true);
+            var twoRows = Check(report, true, twoRows: true);
+            var longPanel = Check(report, true, longPanel: true);
+            var unrelatedNestedText = Check(report, false, unrelatedNestedText: true);
             CheckReadableCellFit();
-            File.WriteAllText(report, JsonSerializer.Serialize(new { status = "passed", pure, mixed, whollyNested, onePending, framed }, JsonDefaults.Options));
+            File.WriteAllText(report, JsonSerializer.Serialize(new { status = "passed", pure, mixed, whollyNested, onePending, framed, twoRows, longPanel, unrelatedNestedText, crossingEquipment }, JsonDefaults.Options));
         }
         catch (System.Exception error)
         { File.WriteAllText(report, JsonSerializer.Serialize(new { status = "failed", assembly = typeof(BilingualTableCopy).Assembly.Location, error = error.ToString() })); }
@@ -49,14 +53,16 @@ public class NestedGridTableCopyTests
 
     // Real failure structure: table text and verticals belong to model space;
     // repeated body row lines belong to grandchildren of one anonymous-like block.
-    private static object Check(string report, bool mixed, bool whollyNested = false, bool onePending = false, bool framed = false)
+    private static object Check(string report, bool mixed, bool whollyNested = false, bool onePending = false, bool framed = false, bool twoRows = false, bool longPanel = false, bool unrelatedNestedText = false, bool crossingEquipment = false)
     {
         using var db = new Database(true, true);
         var previous = HostApplicationServices.WorkingDatabase;
         HostApplicationServices.WorkingDatabase = db;
         var receipts = new List<BilingualTableCopy.CopyReceipt>();
-        string output = Path.Combine(Path.GetDirectoryName(report)!, framed ? "framed.dwg" : onePending ? "one-pending.dwg" : mixed ? "mixed.dwg" : whollyNested ? "wholly-nested-grid.dwg" : "nested-grid.dwg");
+        string output = Path.Combine(Path.GetDirectoryName(report)!, framed ? "framed.dwg" : onePending ? "one-pending.dwg" : mixed ? "mixed.dwg" : whollyNested ? "wholly-nested-grid.dwg" : crossingEquipment ? "crossing-equipment.dwg" : unrelatedNestedText ? "unrelated-nested-text.dwg" : "nested-grid.dwg");
         string? targetBlockHandle = null, targetLineHandle = null;
+        int rowCount = longPanel ? 14 : twoRows ? 2 : 3;
+        double tableHeight = rowCount * 10;
         try
         {
             using (var tx = db.TransactionManager.StartTransaction())
@@ -69,18 +75,25 @@ public class NestedGridTableCopyTests
                 if (mixed) Add(leaf, new Circle(new(20, 0, 0), Vector3d.ZAxis, .25));
                 var rows = new BlockTableRecord { Name = "FixtureNestedRows" };
                 bt.Add(rows); tx.AddNewlyCreatedDBObject(rows, true);
-                for (int i = 0; i < 3; i++) Add(rows, new BlockReference(new(0, i * 10, 0), leaf.ObjectId));
+                for (int i = 0; i < rowCount; i++) Add(rows, new BlockReference(new(0, i * 10, 0), leaf.ObjectId));
                 var originalGrid=new BlockReference(Point3d.Origin, rows.ObjectId);
                 Add(owner,originalGrid);
+                if(unrelatedNestedText || crossingEquipment)
+                {
+                    var equipment=new BlockTableRecord { Name="FixtureEquipment" };
+                    bt.Add(equipment);tx.AddNewlyCreatedDBObject(equipment,true);
+                    Add(equipment,new MText { TextHeight=2, Contents="Silo", Location=new(2,4,0) });
+                    Add(owner,new BlockReference(crossingEquipment ? new Point3d(-3,0,0) : Point3d.Origin,equipment.ObjectId));
+                }
                 var segments = new List<Segment2>();
                 foreach (double x in new[] { 0d, 20d, 40d })
-                { Add(whollyNested ? rows : owner, new Line(new(x, 0, 0), new(x, 30, 0))); segments.Add(new(new(x, 0), new(x, 30))); }
-                Add(whollyNested ? rows : owner, new Line(new(0, 30, 0), new(40, 30, 0)));
-                for (int i = 0; i <= 3; i++) segments.Add(new(new(0, i * 10), new(40, i * 10)));
+                { Add(whollyNested ? rows : owner, new Line(new(x, 0, 0), new(x, tableHeight, 0))); segments.Add(new(new(x, 0), new(x, tableHeight))); }
+                Add(whollyNested ? rows : owner, new Line(new(0, tableHeight, 0), new(40, tableHeight, 0)));
+                for (int i = 0; i <= rowCount; i++) segments.Add(new(new(0, i * 10), new(40, i * 10)));
                 if(framed)
                     foreach(var line in new Segment2[]{new(new(-5,-5),new(45,-5)),new(new(45,-5),new(45,35)),new(new(45,35),new(-5,35)),new(new(-5,35),new(-5,-5))})
                     { Add(owner,new Line(new(line.Start.X,line.Start.Y,0),new(line.End.X,line.End.Y,0)));segments.Add(line); }
-                var cells = Enumerable.Range(0, 3).SelectMany(i => new[] { new Rect2(0, i * 10, 20, i * 10 + 10), new Rect2(20, i * 10, 40, i * 10 + 10) }).ToArray();
+                var cells = Enumerable.Range(0, rowCount).SelectMany(i => new[] { new Rect2(0, i * 10, 20, i * 10 + 10), new Rect2(20, i * 10, 40, i * 10 + 10) }).ToArray();
                 var texts = new List<CadLayoutText>(); var inputs = new List<LayoutWriteInput>();
                 foreach (var cell in cells)
                 {
@@ -105,8 +118,15 @@ public class NestedGridTableCopyTests
                 var handled = BilingualTableCopy.Apply(db, tx, baseline, inputs.ToArray(),
                     new() { [owner.Name] = texts.Select(t => t.Source.Bounds).ToList() }, "en", new(), receipts, decisions, new(), new(), blocked);
                 if (mixed)
-                    Require(handled.Count == 0 && receipts.Count == 0 && blocked.Count == 6,
+                {
+                    Require(handled.Count == 0 && receipts.Count == 0 && blocked.Count == rowCount*2,
                         "A block containing non-grid graphics must not be cloned as a table grid.");
+                    var obstacles = new Dictionary<string,List<Rect2>> { [owner.Name] = texts.Select(t=>t.Source.Bounds).ToList() };
+                    var fallback = BilingualGroupLayout.Plan(db, baseline, inputs.ToArray(), obstacles, "en",
+                        new CadObjectAccess(db,tx), decisions, blocked:blocked);
+                    Require(fallback.Count==0 && blocked.Count==rowCount*2,
+                        "A real table with unsupported grid members must remain an explicit complete-table repair, never an unframed text panel.");
+                }
                 else
                 {
                     Require(handled.Count == (onePending ? 1 : 6) && blocked.Count == 0,
@@ -122,8 +142,11 @@ public class NestedGridTableCopyTests
                     }
                     targetLineHandle = receipts.FirstOrDefault(r => tx.GetObject(db.GetObjectId(false, new Handle(Convert.ToInt64(r.TargetHandle, 16)), 0), OpenMode.ForRead) is Line)?.TargetHandle;
                     Require(receipts.Count == (whollyNested ? 7 : 11), "Expected complete nested grid plus all six texts.");
-                    if(framed) Require(receipts.All(r=>Math.Abs(r.Dx-47.5)<1e-6 && Math.Abs(r.Dy)<1e-6),
-                        "Supplement must align with source rows wholly beyond the right frame, not straddle it.");
+                    if(unrelatedNestedText || crossingEquipment)
+                        Require(receipts.All(r=>r.Dx!=0 && Math.Abs(r.Dy)<1e-6),
+                            "A complex equipment schedule needs one complete translated grid directly left or right of its source, not an above/below text panel.");
+                    if(framed) Require(receipts.All(r=>r.Dx!=0 || r.Dy!=0),
+                        "A supplement must remain separate from its source; crossing the frame is permitted.");
                     foreach (var input in inputs) Require(((MText)tx.GetObject(input.ObjectId, OpenMode.ForRead)).Text == "ABC", "Original text must remain unchanged.");
                 }
                 tx.Commit();
@@ -147,7 +170,7 @@ public class NestedGridTableCopyTests
             string movedBlock = Alter(output, "moved-block.dwg", targetBlockHandle!, e => ((BlockReference)e).Rotation += .1);
             RequireRejected(() => Verify(movedBlock, restored), "Rotated copied grid must fail transform verification.");
         }
-        return new { mixed, whollyNested, copies = receipts.Count, output };
+        return new { mixed, whollyNested, unrelatedNestedText, crossingEquipment, copies = receipts.Count, output };
     }
 
     private static string Alter(string source, string name, string handle, Action<Entity> change)

@@ -1,5 +1,5 @@
 ---
-name: cad-translate-pro
+name: CAD-TRANSLATE-PRO
 description: Use when translating DWG or DXF engineering drawings between Chinese, English, Spanish or French, including target-language replacement, bilingual output, or preserving source text with nearby translation.
 ---
 
@@ -12,7 +12,7 @@ Produce an accurately translated, readable drawing without overwriting the sourc
 
 An affirmative bilingual request wins over generic translation wording; “不要双语，只要英文” is replacement. Follow the requested target language, not a filename, previous job or language already present in the drawing. Ask only when the result genuinely conflicts or the language direction is indeterminate. Pass `--output-mode`, `--source-language` and `--target-language` explicitly.
 
-The branches have independent importers, placement policies, preflight, final checks and visual receipts; they share only neutral transport and translation batching. In bilingual DWGs, complete translated tables and prose panels may use the nearest clear same-side space outside a frame; retain original geometry/plot settings and disclose the print-range warning. Ordinary labels remain locally paired. Never switch a sealed job's mode/direction or apply another branch's acceptance. V1 jobs are historical evidence, not reusable V2 jobs.
+The branches have independent importers, placement policies, preflight, final checks and visual receipts; they share only neutral transport and translation batching. In bilingual DWGs, translations may cross drawing lines and use nearby space outside frames; text must not overlap other text. Keep scattered labels locally paired; keep rotated signature translations within their own cells, using horizontal target text when needed. Place prose as same-width, height-adjusting blocks to the left/right; first skip existing source/target bilingual labels, paragraphs and tables under the shared skip rule in the bilingual workflow, including bilingual title-block templates even when a filled-in value remains source-only; copy a full target-language table only when that table has no target text at all: a table whose cells already carry target text (a bilingual title block or schedule) is never cloned, its cells are paired to the existing same-cell labels, and an in-place label is added only under the cells that still lack a counterpart. For a tall table, prefer the immediately adjacent horizontal position toward the sheet interior, then the exterior; for a wide table, use the immediately adjacent vertical positions in that order. Follow the grouping and failure rules in the bilingual workflow. Retain original geometry/plot settings and disclose the print-range warning for outside additions. Never switch a sealed job's mode/direction or apply another branch's acceptance. V1 jobs are historical evidence, not reusable V2 jobs.
 
 ## Run and translate
 
@@ -41,3 +41,26 @@ Run `audit-summary` after import, then follow [visual review](references/visual-
 Deliver the current candidate only when `deliveryReady=true`. `ready_with_warnings` is valid for reviewed, usable output with disclosed minor imperfections. Missing/misleading translation, changed numbers/units, unreadable text, serious obstruction, wrong associations or source/geometry damage remain blocking. Judge the combined effect of minor defects; do not invent a numeric quality score. If blocked, retain the best candidate and identify concrete remaining issues; it may be shared only as a labeled review draft.
 
 Legacy SHX/bigfont text extracted as Latin characters/question marks may be unresolved encoding, not passthrough. Check actual font paths and readable source handles, then re-extract or use verified visual transcription; do not guess technical values. DXF, dimensions, MLeader, native Table, XREF and proxy content need specific coverage or explicit limitations. Never call partially translated content complete.
+
+
+## Background execution (never show windows on the user's desktop)
+
+Long CAD stages must run invisibly; a console window appearing on the user's desktop is a defect of the run, not an acceptable side effect.
+
+- Launch detached stages through the hidden launcher `scripts/run_hidden.vbs`: `wscript.exe //nologo scripts\run_hidden.vbs "cmd /c <job>\exchange\_run-import.cmd"` runs the command with window style 0 and does not wait.
+- Never start python or a command wrapper with `Start-Process -NoNewWindow`; when a PowerShell launch is unavoidable, pass `-WindowStyle Hidden`.
+- When a Windows scheduled task is needed to survive the agent shell (long imports, resume/publish), make the task action the hidden `wscript.exe` launcher and delete the one-shot task as soon as the stage ends, so it cannot fire again later.
+- Redirect every stage's stdout and stderr into the job's `exchange/` folder. In hidden mode those files are the only failure record: a zero-byte log with no console output means the process never started, not a silent success.
+
+## Verify before spending a whole drawing run
+
+- Validate the translation batch against the Core validator before starting AutoCAD: assemble first, then run the validator standalone (`scripts/text_validation.py`), and only then run `import`. Token-order, number and unit regressions surface in seconds instead of after a full drawing run.
+- Move a stale `artifacts/candidate-binding.json` aside when a previous attempt left a staged candidate, otherwise `import` resumes that candidate instead of running the corrected layout.
+- After one native change, rerun once and judge by the recorded counters (`addedCount`, `skippedExistingCount`, `unresolved`); two consecutive crashes of the same class mean stop and re-derive the cause instead of rebuilding again.
+
+## Native placement pitfalls (verified)
+
+- Never read `AttributeReference` values in the placement path: attribute access can abort the AutoCAD core console with exit -1 and no managed traceback. Detect template/title-block content by entity type and by text the exporter already reports.
+- Cell and rectangle lookups must be tolerant. A `First()`-style cell lookup threw when a text centre fell between grid lines and killed the whole run; use a `FirstOrDefault` helper and treat a miss as "no cell".
+- Release the members of a failed group only when they truly lack a target. Releasing every member of many tables at once floods the placement search and makes the run pathologically slow or fatal.
+- Cells that already hold target text are paired to that existing label instead of receiving new text, so a second pass adds no duplicate; keep the pairing recorded in `bilingual-pairs.json` for review.

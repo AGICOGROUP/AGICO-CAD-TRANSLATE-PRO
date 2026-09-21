@@ -1,6 +1,6 @@
 namespace CadTranslation.Core;
 
-/// <summary>Two table choices: a readable same-cell suffix, or a touching-side copy.</summary>
+/// <summary>Complete translated copies, aligned beside or above/below the source.</summary>
 public static class BilingualTablePlacement
 {
     public static Rect2? AfterSource(Rect2 cell, Rect2 source, double width, double height,
@@ -24,22 +24,34 @@ public static class BilingualTablePlacement
         new(table.Left, table.Bottom - gap - table.Height, table.Right, table.Bottom - gap)
     ];
 
+    public static IReadOnlyList<Rect2> CompleteCopySearch(Rect2 table, double gap,
+        IReadOnlyList<Rect2> occupied, IReadOnlyList<Rect2> frames)
+        => AdjacentCopySearch(table, gap, frames);
+
     public static IReadOnlyList<Rect2> AdjacentCopySearch(Rect2 table, double gap, IReadOnlyList<Rect2>? frames = null)
     {
-        var result = new List<Rect2>();
-        var primary = AdjacentCopies(table, gap);
-        result.AddRange(primary);
-        foreach (double fraction in new[] { -.5, -.25, .25, .5 })
-        {
-            double dy = table.Height * fraction, dx = table.Width * fraction;
-            result.Add(new(primary[0].Left, primary[0].Bottom + dy, primary[0].Right, primary[0].Top + dy));
-            result.Add(new(primary[1].Left, primary[1].Bottom + dy, primary[1].Right, primary[1].Top + dy));
-            result.Add(new(primary[2].Left + dx, primary[2].Bottom, primary[2].Right + dx, primary[2].Top));
-            result.Add(new(primary[3].Left + dx, primary[3].Bottom, primary[3].Right + dx, primary[3].Top));
-        }
-        result.AddRange(BilingualPanelPlacement.OutsideFrames(table,table.Width,table.Height,gap,frames ?? []));
-        return result.Where(b=>BilingualPanelPlacement.AvoidsOtherFrames(table,b,frames ?? [])).ToArray();
+        frames ??= [];
+        var own = frames.Where(f => IsContainingFrame(table, f)).OrderBy(f => f.Area).FirstOrDefault();
+        bool hasFrame = own.Area > 0;
+        var adjacent = AdjacentCopies(table, gap);
+        // Tall tables attach horizontally; wide tables attach vertically.
+        // Within that axis, move toward the sheet interior before its exterior.
+        bool inwardRight = !hasFrame || table.Center.X <= own.Center.X;
+        bool inwardUp = hasFrame && table.Center.Y <= own.Center.Y;
+        int[] order = table.Width >= table.Height
+            ? [inwardUp ? 2 : 3, inwardUp ? 3 : 2, inwardRight ? 0 : 1, inwardRight ? 1 : 0]
+            : [inwardRight ? 0 : 1, inwardRight ? 1 : 0, inwardUp ? 2 : 3, inwardUp ? 3 : 2];
+        return order.Select(i => adjacent[i])
+            .Where(candidate => AvoidsOtherTableFrames(table, candidate, frames))
+            .ToArray();
     }
+
+    public static bool AvoidsOtherTableFrames(Rect2 table, Rect2 candidate, IEnumerable<Rect2> frames) =>
+        !frames.Any(f => !IsContainingFrame(table, f) && Overlap(f, candidate));
+
+    public static bool IsContainingFrame(Rect2 table, Rect2 frame) => frame.Area > table.Area * 1.5 &&
+        frame.Left <= table.Center.X && frame.Right >= table.Center.X &&
+        frame.Bottom <= table.Center.Y && frame.Top >= table.Center.Y;
 
     public static bool Overlap(Rect2 a, Rect2 b, double gap = 0) =>
         a.Left < b.Right + gap && a.Right > b.Left - gap && a.Bottom < b.Top + gap && a.Top > b.Bottom - gap;

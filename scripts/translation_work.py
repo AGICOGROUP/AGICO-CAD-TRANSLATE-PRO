@@ -36,7 +36,9 @@ def needs_translation(record, source_language):
             "re-extract readable source text before translation; do not pass through or guess."
         )
     text = visible(str(record.get("plainText", "")))
-    return bool((CJK if source_language == "zh" else LATIN).search(text))
+    # Full-width punctuation and operators can occur in numeric-only CAD notes.
+    # They are not Chinese wording and need no additional translated entity.
+    return bool((HAN if source_language == "zh" else LATIN).search(text))
 
 def groups(records, source_language, *, semantic=False):
     """Same protected values, role and layout context only; stable representative IDs."""

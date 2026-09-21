@@ -189,30 +189,23 @@ internal static class BilingualDrawingImporter
                         .Concat(titleFields.Where(t=>t.Owner!=owner.Name).SelectMany(t=>
                             InstanceOccupancyProjection.Project(t.Bounds,t.Owner,owner.Name,baseline.BlockInstances)
                                 .Select(b=>(Bounds:b,Text:t.Text)))).ToArray();
-                    return BilingualTableLayout.TranslationGroups(owner.Regions,owner.BoundarySegments,labels)
-                        .Where(cells=>!BilingualTitlePanel.IsTitlePanel(labels.Where(t=>cells.Any(c=>c.Contains(
-                            new Rect2(t.Bounds.Center.X,t.Bounds.Center.Y,t.Bounds.Center.X,t.Bounds.Center.Y)))).Select(t=>t.Text))).ToArray();
+                    return BilingualTableLayout.TranslationGroups(owner.Regions,owner.BoundarySegments,labels);
                 }
                 var tableGroups = baseline.Definitions.ToDictionary(d => d.Name, Tables);
                 var occupied = baseline.Definitions.ToDictionary(d => d.Name, d => d.Texts.Select(t => t.Source.Bounds).ToList());
                 foreach (var item in baseline.Definitions.SelectMany(d => d.Texts.Select(t => (Definition: d.Name, Bounds: t.Source.Bounds))).ToArray())
                     ReserveProjected(occupied, item.Definition, item.Bounds, baseline.BlockInstances, includeLocal: false);
                 var rowsByHandle = manifest.ToDictionary(r => r.Handle, StringComparer.OrdinalIgnoreCase);
-                var fixedLabels = BilingualFixedLabelPolicy.Select(inputs
-                    .Where(input => topology.ContainsKey(input.Manifest.RecordId))
-                    .Select(input => {
-                        var text = topology[input.Manifest.RecordId];
-                        return new BilingualFixedLabelSample(input.Manifest.RecordId, input.Manifest.RawText,
-                            Plain(input.RestoredText), input.Manifest.ObjectType, text.DefinitionName,
-                            text.Source.Bounds, text.Source.OriginalTextHeight);
-                    }).ToArray());
                 progress.Stage = "copy-bilingual-tables";
                 var tableSlots = new Dictionary<string,BilingualGroupLayout.Slot>();
                 var tableIds = new HashSet<string>();
                 var blockedTables = new HashSet<string>();
-                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, tableSlots, tableIds, blockedTables, access, tableGroups);
+                var releasedTables = new HashSet<string>();
+                var copied = BilingualTableCopy.Apply(db, tx, baseline, inputs.Where(i=>!termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, pairs, tableCopies, tableDecisions, tableSlots, tableIds, blockedTables, access, tableGroups, releasedTables);
                 progress.Stage = "plan-table-slots";
-                foreach(var slot in BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !tableIds.Contains(i.Manifest.RecordId) && !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions, tableGroups, blockedTables))
+                // A real table remains a complete-copy unit even after a failed attempt.
+                // Non-tables were rejected before table IDs or blocked IDs were reserved.
+                foreach(var slot in BilingualGroupLayout.Plan(db, baseline, inputs.Where(i => !tableIds.Contains(i.Manifest.RecordId) && !tableSlots.ContainsKey(i.Manifest.RecordId) && !copied.Contains(i.Manifest.RecordId) && !termMembers.Contains(i.Manifest.RecordId)).ToArray(), occupied, context.Config.TargetLanguage, access, tableDecisions, tableGroups, blockedTables, releasedTables))
                     tableSlots[slot.Key]=slot.Value;
 
                 progress.Stage = "place-bilingual-text";
@@ -231,21 +224,7 @@ internal static class BilingualDrawingImporter
                     string normalized = Normalize(targetText);
                     string sourcePlain = Plain(row.RawText);
                     if (normalized.Length == 0) { unresolved.Add(row.RecordId); continue; }
-                    if (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) &&
-                        fixedLabels.ExistingEnglishIdBySourceId.TryGetValue(row.RecordId, out string? existingRecordId) &&
-                        topology.TryGetValue(existingRecordId, out var fixedEnglish))
-                    {
-                        string existingText = Plain(rowsByHandle[fixedEnglish.EntityHandle].RawText);
-                        pairs.Add(new(row.RecordId, row.Handle, fixedEnglish.EntityHandle, existingText, "existing-neighbor", source.DefinitionName, fixedEnglish.Source.Bounds, 1));
-                        continue;
-                    }
-                    if (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) &&
-                        BilingualFixedLabelPolicy.ContainsEmbeddedEnglish(row.RawText))
-                    {
-                        pairs.Add(new(row.RecordId, row.Handle, row.Handle, sourcePlain, "existing-inline", source.DefinitionName, source.Source.Bounds, 1));
-                        continue;
-                    }
-                    if (Normalize(sourcePlain).Contains(normalized, StringComparison.OrdinalIgnoreCase))
+                    if (BilingualLabelEquivalence.MatchesInline(sourcePlain, targetText))
                     {
                         pairs.Add(new(row.RecordId, row.Handle, row.Handle, targetText, "existing-inline", source.DefinitionName, source.Source.Bounds, 1));
                         continue;
@@ -290,6 +269,7 @@ internal static class BilingualDrawingImporter
                     bool placed = false;
                     if (inTable)
                     {
+                        added.Rotation = 0;
                         added.TextStyleId = db.Textstyle;
                         added.Contents = BilingualGroupLayout.Contents(slot.DisplayText, context.Config.TargetLanguage);
                         added.TextHeight = slot.Height;
@@ -300,14 +280,15 @@ internal static class BilingualDrawingImporter
                         placed = slot.Bounds.Contains(bounds, 1e-5);
                     }
                     if (placed) scale = slot.Height / source.Source.OriginalTextHeight;
-                    if(inTable && !placed && slot.Strategy=="table-inline-right")
+                    if(inTable && !placed)
                     {
                         unresolved.Add(row.RecordId);
-                        unresolvedDetails.Add(new {row.RecordId,row.Handle,reason="table-inline-measurement-changed",slot.Bounds});
+                        unresolvedDetails.Add(new {row.RecordId,row.Handle,reason="group-measurement-changed",slot.Bounds});
                         continue;
                     }
                     var placementTrace = new BilingualPlacementTrace();
-                    if (!placed && !Place(added, contents, source, definition, occupied[source.DefinitionName], row.Geometry.InsertionPoint.Z, out bounds, out scale, placementTrace))
+                    if (!placed && !Place(added, contents, source, definition, occupied[source.DefinitionName], row.Geometry.InsertionPoint.Z, out bounds, out scale, placementTrace,
+                        BilingualTitlePanel.IsTitleField(Plain(row.RawText))))
                     { unresolved.Add(row.RecordId); unresolvedDetails.Add(new { row.RecordId, row.Handle, source.Source,
                         source.Region, actualWidth = added.ActualWidth, actualHeight = added.ActualHeight,
                         placement = placementTrace.Report(baseline, pairs, source.DefinitionName),
@@ -322,7 +303,7 @@ internal static class BilingualDrawingImporter
                     tx.AddNewlyCreatedDBObject(added, true);
                     LinkSource(db, tx, added, row);
                     ReserveProjected(occupied, source.DefinitionName, bounds, baseline.BlockInstances);
-                    pairs.Add(new(row.RecordId, row.Handle, added.Handle.ToString(), targetText, "added", source.DefinitionName, bounds, scale, placed && inTable ? slot.Strategy : "cell-local-or-nearby"));
+                    pairs.Add(new(row.RecordId, row.Handle, added.Handle.ToString(), placed && inTable ? slot.DisplayText : targetText, "added", source.DefinitionName, bounds, scale, placed && inTable ? slot.Strategy : "cell-local-or-nearby"));
                 }
                 foreach (var group in termGroups)
                 {
@@ -381,8 +362,8 @@ internal static class BilingualDrawingImporter
                 : !SourcePreserved(r, current)).Select(r => r.RecordId).ToArray();
         var missingTargets = pairs.Where(p => !candidateByHandle.TryGetValue(p.TargetHandle, out var target) ||
             (p.Decision == "existing-inline"
-                ? !Normalize(Plain(target.RawText)).Contains(Normalize(p.TargetText), StringComparison.Ordinal)
-                : Normalize(Plain(target.RawText)) != Normalize(p.TargetText))).Select(p => p.RecordId).ToArray();
+                ? !BilingualLabelEquivalence.MatchesInline(Plain(target.RawText), p.TargetText)
+                : !BilingualLabelEquivalence.Matches(Plain(target.RawText), p.TargetText))).Select(p => p.RecordId).ToArray();
         BilingualTableCopy.Verify(context, tableCopies);
         DrawingVerifier.VerifyStructure(context, "bilingual-structure.json", tableCopies.Select(c => c.TargetHandle).ToHashSet(StringComparer.OrdinalIgnoreCase));
         bool passed = changedSources.Length == 0 && missingTargets.Length == 0 && unresolved.Count == 0;
@@ -447,24 +428,30 @@ internal static class BilingualDrawingImporter
     }
 
     private static bool Place(MText text, string contents, CadLayoutText source, CadDefinitionTopology definition,
-        List<Rect2> occupied, double z, out Rect2 result, out double usedScale, BilingualPlacementTrace? trace = null)
+        List<Rect2> occupied, double z, out Rect2 result, out double usedScale, BilingualPlacementTrace? trace = null,
+        bool titleField = false)
     {
         Rect2 box = source.Source.Bounds;
         double height = source.Source.OriginalTextHeight;
         var container = definition.Regions.Where(r => r.Kind is LayoutRegionKind.TableCell or LayoutRegionKind.ClosedFrame)
             .Where(r => r.Bounds.Contains(box, height * .05)).OrderBy(r => r.Bounds.Area).FirstOrDefault();
-        Rect2 allowed = container is null
-            ? new Rect2(box.Left - height * 16, box.Bottom - height * 16, box.Right + height * 16, box.Top + height * 16)
-            : BilingualPlacementPolicy.AllowedForTightRotatedLabel(container.Bounds, box, height, text.Rotation,
-                container.Kind == LayoutRegionKind.TableCell);
+        if (titleField && Math.Abs(Math.Sin(text.Rotation)) > .999 && container is not null &&
+            Math.Min(container.Bounds.Width, container.Bounds.Height) <= height * 12)
+        {
+            if (trace is not null) { trace.Allowed = container.Bounds; trace.RegionId = container.Id; }
+            return BilingualSignaturePlacement.TryPlace(text, contents, source, definition, container.Bounds,
+                occupied, z, out result, out usedScale, trace);
+        }
+        // Keep labels local, but a frame/cell edge is not a hard boundary.
+        Rect2 allowed = new Rect2(box.Left - height * 16, box.Bottom - height * 16,
+            box.Right + height * 16, box.Top + height * 16);
         if (trace is not null) { trace.Allowed = allowed; trace.RegionId = container?.Id; }
         // Every candidate must be inside allowed. Distant text cannot collide;
         // filter once instead of scanning every block's text for every trial.
         occupied = occupied.Where(o => Intersects(allowed, o, height * .12)).Distinct().ToList();
         definition = definition with {
-            BoundarySegments = definition.BoundarySegments.Where(s => s.MaxX>=allowed.Left-1e-6 &&
-                s.MinX<=allowed.Right+1e-6 && s.MaxY>=allowed.Bottom-1e-6 && s.MinY<=allowed.Top+1e-6).ToArray(),
-            ProtectedGeometry = definition.ProtectedGeometry.Where(g => Intersects(allowed,g.Bounds,1e-6)).ToArray()
+            BoundarySegments = [],
+            ProtectedGeometry = []
         };
         if (TryReadableNearby(text, contents, source, definition, allowed, occupied, z, out result, out usedScale, trace)) return true;
         // Exhaust readable wrapping in adjacent pockets before the legacy search
@@ -548,8 +535,9 @@ internal static class BilingualDrawingImporter
         if (!text.Normal.IsEqualTo(Vector3d.ZAxis)) return false;
         Rect2 box = source.Source.Bounds;
         double height = source.Source.OriginalTextHeight;
-        // At most 16 unwrapped, normal-width trials. Do not multiply the dense
-        // drawing's existing width/height/wrap search or move the source text.
+        // Test both readable single-line sizes across nearby edge-aligned space
+        // before accepting a tall wrapped column. Four fixed anchors alone miss
+        // clear space just beyond an obstacle beside the source.
         foreach (double scale in new[] {1.0, .7})
         {
             text.TextHeight = height * scale; text.Width = 0; text.Contents = "{\\W1;" + contents + "}";
@@ -568,6 +556,18 @@ internal static class BilingualDrawingImporter
                 if (!BilingualPlacementChecks.Accept(text, proposed, allowed, source, definition, occupied, height * .12, trace, out Rect2 actual)) continue;
                 result = actual; usedScale = scale; return true;
             }
+            var hints = NearbyAnchors(definition, box);
+            bool Clear(Rect2 b) => !definition.BoundarySegments.Any(s => Crosses(b,s)) &&
+                !definition.ProtectedGeometry.Any(g => !g.Bounds.Contains(box) && Intersects(b,g.Bounds,0));
+            foreach (var slot in BilingualLocalPlacement.Candidates(allowed,box,w,h,occupied,height*.12,hints,Clear)
+                .Where(b => BilingualLocalPlacement.Gap(box,b)<=height*2)
+                .OrderBy(b => BilingualLocalPlacement.Gap(box,b)).Take(32))
+            {
+                BilingualPlacementChecks.Move(text,footprint,slot.Left,slot.Top,z);
+                if (!BilingualPlacementChecks.Accept(text,slot,allowed,source,definition,occupied,height*.12,trace,out var actual)) continue;
+                if (BilingualLocalPlacement.Gap(box,actual)>height*2) continue;
+                result=actual; usedScale=scale; return true;
+            }
         }
         return false;
     }
@@ -583,38 +583,62 @@ internal static class BilingualDrawingImporter
         double along=BilingualPlacementChecks.AlongText(box,text.Rotation);
         // Geometry edges seed positions as well as vetoing them. Hints are not
         // filled obstacles: the existing segment/geometry checks still decide clearance.
-        var hints=definition.BoundarySegments
-            .Where(s=>s.MaxX>=allowed.Left && s.MinX<=allowed.Right && s.MaxY>=allowed.Bottom && s.MinY<=allowed.Top)
-            .Select(s=>new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY))
-            .Concat(definition.ProtectedGeometry.Where(g=>!g.Bounds.Contains(box)).Select(g=>g.Bounds)).Distinct()
-            .OrderBy(b=>BilingualLocalPlacement.Gap(box,b)).Take(24).ToArray();
+        var hints=NearbyAnchors(definition,box);
         bool Clear(Rect2 b) => !definition.BoundarySegments.Any(s=>Crosses(b,s)) &&
             !definition.ProtectedGeometry.Any(g=>!g.Bounds.Contains(box) && Intersects(b,g.Bounds,0));
         foreach (var pass in new[] {(Reach:.8,Small:false),(Reach:2.0,Small:false),(Reach:2.0,Small:true)})
         foreach (double scale in pass.Small ? new[] {.30,.25} : new[] {.7,.55,.45,.35})
-        foreach (double factor in new[] {1.0,.8})
         {
-            text.TextHeight=height*scale;
-            text.Contents="{\\W"+factor.ToString(CultureInfo.InvariantCulture)+";"+contents+"}";
-            foreach (double width in new[] {0, Math.Max(height,along-height*.24),
-                Math.Max(height,along*.8), Math.Max(height,along*1.6),
-                Math.Max(height,along*.5-height*.24), Math.Max(height,along*.35-height*.24)}.Distinct())
+            (Point3d Location,double Width,string Contents,Rect2 Bounds,double Height)? best=null;
+            foreach (double factor in new[] {1.0,.8})
             {
-                text.Width=width;
-                var footprint=BilingualPlacementChecks.Footprint(text);
-                foreach (var slot in BilingualLocalPlacement.Candidates(allowed,box,
-                    footprint.Width,footprint.Height,occupied,height*.12,hints,Clear)
-                    .Where(b=>BilingualLocalPlacement.Gap(box,b)<=height*pass.Reach)
-                    .OrderBy(b=>BilingualLocalPlacement.Gap(box,b)).Take(32))
+                text.TextHeight=height*scale;
+                text.Contents="{\\W"+factor.ToString(CultureInfo.InvariantCulture)+";"+contents+"}";
+                text.Width=0;
+                double unwrapped=Math.Max(height,text.ActualWidth)*1.02;
+                // Source width is not available whitespace. Try broad two-line fits
+                // before narrow source-sized columns, retaining tight-pocket fallback.
+                foreach (double width in new[] {0d}.Concat(new[] {
+                    unwrapped*.75,unwrapped*.5,along*1.6,along-height*.24,
+                    along*.8,along*.5-height*.24,along*.35-height*.24}
+                    .Select(w=>Math.Max(height,w)).Distinct().OrderByDescending(w=>w)))
                 {
-                    BilingualPlacementChecks.Move(text,footprint,slot.Left,slot.Top,z);
-                    if (!BilingualPlacementChecks.Accept(text,slot,allowed,source,definition,occupied,height*.12,trace,out var actual)) continue;
-                    if (BilingualLocalPlacement.Gap(box,actual)>height*pass.Reach) continue;
-                    result=actual; usedScale=scale; return true;
+                    text.Width=width;
+                    var footprint=BilingualPlacementChecks.Footprint(text);
+                    foreach (var slot in BilingualLocalPlacement.Candidates(allowed,box,
+                        footprint.Width,footprint.Height,occupied,height*.12,hints,Clear)
+                        .Where(b=>BilingualLocalPlacement.Gap(box,b)<=height*pass.Reach)
+                        .OrderBy(b=>BilingualLocalPlacement.Gap(box,b)).Take(32))
+                    {
+                        BilingualPlacementChecks.Move(text,footprint,slot.Left,slot.Top,z);
+                        if (!BilingualPlacementChecks.Accept(text,slot,allowed,source,definition,occupied,height*.12,trace,out var actual)) continue;
+                        if (BilingualLocalPlacement.Gap(box,actual)>height*pass.Reach) continue;
+                        // Do not accept the first four-line column before testing
+                        // a same-height, modestly condensed two-line alternative.
+                        if(text.ActualHeight<=text.TextHeight*3.3) {result=actual;usedScale=scale;return true;}
+                        if(best is null || text.ActualHeight<best.Value.Height-1e-8)
+                            best=(text.Location,text.Width,text.Contents,actual,text.ActualHeight);
+                        break;
+                    }
                 }
+            }
+            if(best is {} chosen)
+            {
+                text.TextHeight=height*scale;text.Width=chosen.Width;text.Contents=chosen.Contents;text.Location=chosen.Location;
+                result=chosen.Bounds;usedScale=scale;return true;
             }
         }
         return false;
+    }
+
+    private static Rect2[] NearbyAnchors(CadDefinitionTopology definition, Rect2 source)
+    {
+        // Dense linework must not consume every seed and hide a nearby block's
+        // usable edge. Keep separate bounded budgets for the two obstacle kinds.
+        return definition.ProtectedGeometry.Where(g=>!g.Bounds.Contains(source)).Select(g=>g.Bounds)
+            .OrderBy(b=>BilingualLocalPlacement.Gap(source,b)).Take(8)
+            .Concat(definition.BoundarySegments.Select(s=>new Rect2(s.MinX,s.MinY,s.MaxX,s.MaxY))
+                .Distinct().OrderBy(b=>BilingualLocalPlacement.Gap(source,b)).Take(16)).ToArray();
     }
 
     private static bool TryNearbyGrid(MText text, string contents, CadLayoutText source,

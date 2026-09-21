@@ -31,7 +31,7 @@ public static class LayoutFitPolicy
 {
     public const double MinimumWidthScale = 0.70;
     public const double MinimumHeightScale = 0.55;
-    public const double EmergencyMinimumHeightScale = 0.10;
+    public const double EmergencyMinimumHeightScale = 0.25;
     private const double Tolerance = 1.001;
 
     public static LayoutFitDecision Decide(LayoutFitRequest request)
@@ -144,7 +144,7 @@ public static class LayoutFitPolicy
 public static class BilingualPlacementPolicy
 {
     public static IReadOnlyList<double> HeightScales { get; } =
-        [.45, .35, .30, .25, .20, .15, LayoutFitPolicy.EmergencyMinimumHeightScale];
+        [.45, .35, .30, LayoutFitPolicy.EmergencyMinimumHeightScale];
 
     public static Rect2 PlaceAtCellBottom(Rect2 cell, double width, double height, double margin)
     {

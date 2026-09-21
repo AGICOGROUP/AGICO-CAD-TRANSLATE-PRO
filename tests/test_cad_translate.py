@@ -1,6 +1,7 @@
 import importlib.util
 import hashlib
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -70,7 +71,7 @@ class CadTranslateDryTests(unittest.TestCase):
             self.assertTrue({"recordId", "sourceText", "occurrences", "context"}.issubset(work_records[0]))
             self.assertNotIn("English only", "\n".join(part.read_text(encoding="utf-8") for part in parts))
 
-    def test_translation_worklist_includes_cjk_punctuation_and_extension_b(self):
+    def test_translation_worklist_preserves_punctuation_and_translates_extension_b(self):
         with tempfile.TemporaryDirectory() as directory:
             job = Path(directory)
             self.write_manifest(
@@ -84,8 +85,8 @@ class CadTranslateDryTests(unittest.TestCase):
 
             summary = cad_translate.prepare_translation_worklist(job)
 
-            self.assertEqual(2, summary["translationRecordCount"])
-            self.assertEqual(1, summary["passthroughRecordCount"])
+            self.assertEqual(1, summary["translationRecordCount"])
+            self.assertEqual(2, summary["passthroughRecordCount"])
 
     def test_assemble_translations_fills_passthrough_and_restores_contract(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -189,14 +190,20 @@ class CadTranslateDryTests(unittest.TestCase):
 
         self.assertTrue(glossary_path.is_file())
         glossary = glossary_path.read_text(encoding="utf-8")
-        self.assertIn("共整理 1293 条中英对应记录", glossary)
+        entries = [line.split('|')[1].strip() for line in glossary.splitlines()
+                   if line.startswith('|') and len(line.split('|')) >= 4
+                   and re.search(r'[\u3400-\u9fff]', line.split('|')[1])
+                   and line.split('|')[1].strip() != '中文术语']
+        self.assertGreater(len(entries), 1000)
+        self.assertEqual(len(entries), len(set(entries)))
+        self.assertIn(f"共整理 {len(entries)} 个中文词条", glossary)
         self.assertIn("| 水泥粉磨 | Cement Mill |", glossary)
         self.assertIn("| 袋式收尘器 | Bag Filter |", glossary)
 
         skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("cement-industry-glossary.md", skill_text)
-        self.assertIn("longest complete Chinese term", skill_text)
-        self.assertIn("user-supplied project glossary", skill_text)
+        self.assertIn("longest complete term", skill_text)
+        self.assertIn("user's explicit project terminology first", skill_text)
         self.assertIn("ASCII word boundary", skill_text)
 
     def test_fixed_labels_scale_before_any_move(self):

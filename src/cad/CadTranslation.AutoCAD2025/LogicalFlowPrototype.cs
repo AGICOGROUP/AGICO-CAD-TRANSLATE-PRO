@@ -9,7 +9,10 @@ namespace CadTranslation.AutoCAD2025;
 
 internal static partial class LogicalFlowPrototype
 {
-    private const double MinimumBodyScale = 0.50;
+    // Dense note columns must be allowed to shrink to the agreed readability floor;
+    // at 0.50 long English bodies fail ShouldReplace and leave the column with
+    // skipped replacements and overlapping fragments.
+    private const double MinimumBodyScale = 0.25;
 
     internal static int Run(JobContext context)
     {
@@ -618,22 +621,21 @@ internal static partial class LogicalFlowPrototype
         IReadOnlyList<DenseRegion> denseRegions,
         List<object> reportRows)
     {
-        var bodyHeightByDefinition = denseRegions
-            .GroupBy(region => region.DefinitionName, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => Median(group.Select(region => region.MedianHeight)), StringComparer.Ordinal);
-
+        // Spaced table headers are authored one character per text entity (项|目,
+        // 做|法|名|称, 室|内|外). They must merge into a single term whatever their
+        // size: replacing every fragment with the whole phrase renders headers as
+        // "ItemItem" or four overlapping "Method name" copies.
         var candidates = auditRows
             .Where(row => string.IsNullOrEmpty(row.RegionId) && manifestById.TryGetValue(row.RecordId, out ManifestRecord? record) &&
-                translationById.ContainsKey(row.RecordId) && IsSingleCjk(record.RawText) &&
-                bodyHeightByDefinition.TryGetValue(row.DefinitionName, out double bodyHeight) &&
-                record.Properties.Height >= bodyHeight * 1.5)
+                translationById.ContainsKey(row.RecordId) && IsSingleCjk(record.RawText))
             .Select(row => new TitleCandidate(row, manifestById[row.RecordId]))
             .ToArray();
 
         int replaced = 0;
-        foreach (TitleCandidate[] ordered in ClusterTitles(candidates))
+        foreach (TitleCandidate[] run in ClusterTitles(candidates).Select(AdjacentRun))
         {
-            if (ordered.Length < 4)
+            TitleCandidate[] ordered = run;
+            if (ordered.Length < 2)
             {
                 continue;
             }
@@ -870,6 +872,33 @@ internal static partial class LogicalFlowPrototype
             }
         }
         return result.ToArray();
+    }
+
+    // Within one row band keep only genuine neighbours: the gap between two
+    // fragments must stay within a couple of text heights, so two separate
+    // headers on the same row are not merged into each other.
+    private static TitleCandidate[] AdjacentRun(TitleCandidate[] clustered)
+    {
+        if (clustered.Length < 2)
+        {
+            return clustered;
+        }
+
+        var best = new List<TitleCandidate> { clustered[0] };
+        var current = new List<TitleCandidate> { clustered[0] };
+        foreach (TitleCandidate candidate in clustered.Skip(1))
+        {
+            double medianHeight = Median(current.Select(value => value.Manifest.Properties.Height));
+            double gap = candidate.Row.SourceBounds.Left - current[^1].Row.SourceBounds.Right;
+            current = gap <= medianHeight * 2.2
+                ? current.Append(candidate).ToList()
+                : new List<TitleCandidate> { candidate };
+            if (current.Count > best.Count)
+            {
+                best = current;
+            }
+        }
+        return best.ToArray();
     }
 
     private static Rect2 Union(IEnumerable<Rect2> bounds)

@@ -28,6 +28,7 @@ internal static class DrawingExporter
         var records = new List<ManifestRecord>();
         var unsupported = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var unusedBlocks = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        int invisibleAttributeTemplates = 0;
         using (Transaction transaction = database.TransactionManager.StartTransaction())
         {
             // Bilingual additions apply to placed drawing content. Dormant block
@@ -43,6 +44,19 @@ internal static class DrawingExporter
                     unusedBlocks[item.OwnerPath] = unusedBlocks.GetValueOrDefault(item.OwnerPath) + 1;
                     continue;
                 }
+                if (activePrefixes is not null && item.Value is AttributeDefinition attribute)
+                {
+                    var owner = (BlockTableRecord)transaction.GetObject(attribute.OwnerId, OpenMode.ForRead);
+                    // A variable attribute definition inside a block is an edit
+                    // template. Its visible instances are AttributeReferences.
+                    if (attribute.Invisible || (!attribute.Constant && !owner.IsLayout))
+                    {
+                        invisibleAttributeTemplates++;
+                        continue;
+                    }
+                }
+                if (activePrefixes is not null && item.Value is AttributeReference reference && reference.Invisible)
+                    continue;
                 ITextAdapter? adapter = Adapters.FirstOrDefault(candidate => candidate.CanHandle(item.Value));
                 if (adapter is null)
                 {
@@ -77,6 +91,7 @@ internal static class DrawingExporter
         if (string.Equals(context.Config.OutputMode, "bilingual", StringComparison.OrdinalIgnoreCase))
             NativeDrawing.Report(context, "bilingual-scope.json", new { scope = "model-and-all-layout-reachable-blocks",
                 activeRecordCount = ordered.Length, preservedUnusedBlocks = unusedBlocks,
+                invisibleAttributeTemplates,
                 runtimeModuleId = typeof(DrawingExporter).Assembly.ManifestModule.ModuleVersionId,
                 runtimePath = typeof(DrawingExporter).Assembly.Location });
         AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, "export-summary.json"), JsonSerializer.Serialize(new { recordCount = ordered.Length, typeCounts = ordered.GroupBy(record => record.ObjectType).ToDictionary(group => group.Key, group => group.Count()), unsupported }, JsonDefaults.Options));

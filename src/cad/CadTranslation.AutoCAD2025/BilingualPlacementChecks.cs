@@ -89,14 +89,8 @@ internal static class BilingualPlacementChecks
             if (!allowed.Contains(b, 1e-6)) return Reject("outside-region", b, allowed);
             foreach (Rect2 o in occupied)
                 if (BilingualDrawingImporter.Intersects(b, o, padding)) return Reject("text-overlap", b, o);
-            foreach (Segment2 line in definition.BoundarySegments)
-                if (BilingualDrawingImporter.Crosses(b, line)) return Reject("boundary-crossing", b, boundary: line);
-            foreach (var g in definition.ProtectedGeometry)
-                if (!g.Bounds.Contains(source.Source.Bounds) && BilingualDrawingImporter.Intersects(b, g.Bounds, 0))
-                {
-                    string? handle = !g.ObjectId.IsNull && g.ObjectId.IsValid ? g.ObjectId.Handle.ToString() : null;
-                    return Reject("protected-geometry", b, g.Bounds, handle);
-                }
+            // Bilingual additions may cross drawing lines. Only text occupancy
+            // is a hard collision; source geometry remains unmodified.
             return true;
         }
     }

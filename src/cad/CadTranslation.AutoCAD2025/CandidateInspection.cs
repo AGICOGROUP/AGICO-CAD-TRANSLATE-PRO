@@ -53,7 +53,7 @@ internal static class CandidateInspection
                     bool retainedLabel = pair.Decision is "existing-neighbor" or "existing-inline" &&
                         byHandle.TryGetValue(pair.TargetHandle, out var existing) &&
                         BilingualDrawingImporter.Plain(existing.RawText) == pair.TargetText;
-                    if (!retainedLabel && !BilingualLabelEquivalence.Matches(pair.TargetText, expected) &&
+                    if (!retainedLabel && !MatchesNumberedTableTarget(pair,expected,row,manifest) && !BilingualLabelEquivalence.Matches(pair.TargetText, expected) &&
                         BilingualDrawingImporter.Normalize(pair.TargetText) != BilingualDrawingImporter.Normalize(expected))
                         throw new CommandProtocolException("stale_pair_translation", $"Candidate was built from different translation: {row.RecordId}");
                 }
@@ -101,6 +101,22 @@ internal static class CandidateInspection
         new ContentSeal(context.Config.SourceSha256, Hashing.Sha256File(context.Config.TranslationPath!), CandidateRows(context)));
 
     internal sealed record PairsReceipt(string OutputMode, BilingualDrawingImporter.Pair[] Pairs, string[] Unresolved);
+    // A table panel may prepend a source row identifier. Prove it comes from
+    // the same source row; never accept an arbitrary changed translation.
+    internal static bool MatchesNumberedTableTarget(BilingualDrawingImporter.Pair pair,string expected,
+        ManifestRecord row,IReadOnlyList<ManifestRecord> manifest)
+    {
+        if(pair.Decision!="added" || pair.PlacementStrategy!="table-aligned-block") return false;
+        var match=System.Text.RegularExpressions.Regex.Match(pair.TargetText,@"^(\d+[a-z]?)\. (.+)$",System.Text.RegularExpressions.RegexOptions.Singleline);
+        if(!match.Success || BilingualDrawingImporter.Normalize(match.Groups[2].Value)!=BilingualDrawingImporter.Normalize(expected)) return false;
+        string number=match.Groups[1].Value;
+        double h=row.Properties.Height;
+        var p=row.Geometry.InsertionPoint;
+        return manifest.Any(r=>r.RecordId!=row.RecordId && r.OwnerPath==row.OwnerPath &&
+            BilingualDrawingImporter.Plain(r.RawText).Trim()==number &&
+            Math.Abs(r.Geometry.InsertionPoint.Y-p.Y)<Math.Max(h,r.Properties.Height)*3 &&
+            p.X>=r.Geometry.InsertionPoint.X && p.X-r.Geometry.InsertionPoint.X<h*8);
+    }
     internal sealed record TableReceipt(JsonElement Tables, BilingualTableCopy.CopyReceipt[] Copies);
     private sealed record ContentSeal(string SourceSha256, string TranslationSha256, ManifestRecord[] Rows);
 }

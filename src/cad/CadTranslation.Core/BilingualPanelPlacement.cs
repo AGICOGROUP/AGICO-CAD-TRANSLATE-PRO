@@ -2,6 +2,49 @@ namespace CadTranslation.Core;
 
 public static class BilingualPanelPlacement
 {
+    public static IEnumerable<Rect2> SideDestinations(Rect2 source, double height, double gap,
+        IReadOnlyList<Rect2> frames, IReadOnlyList<Rect2> occupied)
+    {
+        double width=source.Width, bottom=source.Top-height;
+        Rect2 Right(double edge) => new(edge+gap,bottom,edge+gap+width,source.Top);
+        Rect2 Left(double edge) => new(edge-gap-width,bottom,edge-gap,source.Top);
+        var result=new List<Rect2>{Right(source.Right),Left(source.Left)};
+        foreach(var frame in frames.Where(f=>f.Contains(source)))
+        { result.Add(Right(frame.Right)); result.Add(Left(frame.Left)); }
+        var neighbors=occupied.Where(b=>b.Bottom<source.Top+gap && b.Top>bottom-gap).ToArray();
+        foreach(var b in neighbors.OrderBy(b=>BilingualLocalPlacement.Gap(source,b)).Take(32))
+        {
+            if(b.Right>=source.Right)result.Add(Right(b.Right));
+            if(b.Left<=source.Left)result.Add(Left(b.Left));
+        }
+        if(neighbors.Length>0)
+        { result.Add(Right(Math.Max(source.Right,neighbors.Max(b=>b.Right)))); result.Add(Left(Math.Min(source.Left,neighbors.Min(b=>b.Left)))); }
+        return result.Distinct().Where(b=>AvoidsOtherFrames(source,b,frames))
+            .OrderBy(b=>CrossesContainingFrame(source,b,frames))
+            .ThenBy(b=>BilingualLocalPlacement.Gap(source,b));
+    }
+
+    // Vertical neighbours keep the block aligned with its source column. The
+    // bands above and below a containing frame are offered so a long translation
+    // can sit next to its source instead of far off to one side.
+    public static IEnumerable<Rect2> VerticalDestinations(Rect2 source, double height, double gap,
+        IReadOnlyList<Rect2> frames, IReadOnlyList<Rect2> occupied)
+    {
+        double width = source.Width;
+        Rect2 Above(double edge) => new(source.Left, edge + gap, source.Left + width, edge + gap + height);
+        Rect2 Below(double edge) => new(source.Left, edge - gap - height, source.Left, edge - gap);
+        var result = new List<Rect2> { Above(source.Top), Below(source.Bottom) };
+        foreach (var frame in frames.Where(f => f.Contains(source)))
+        { result.Add(Above(frame.Top)); result.Add(Below(frame.Bottom)); }
+        return result.Distinct().Where(b => AvoidsOtherFrames(source, b, frames)
+                && !occupied.Any(o => BilingualTablePlacement.Overlap(b, o)))
+            .OrderBy(b => CrossesContainingFrame(source, b, frames))
+            .ThenBy(b => BilingualLocalPlacement.Gap(source, b));
+    }
+
+    public static bool CrossesContainingFrame(Rect2 source,Rect2 target,IEnumerable<Rect2> frames) =>
+        frames.Any(f=>f.Contains(source) && !f.Contains(target) && BilingualTablePlacement.Overlap(f,target));
+
     public static bool AvoidsOtherFrames(Rect2 source,Rect2 target,IEnumerable<Rect2> frames) =>
         !frames.Any(f=>!f.Contains(source) && BilingualTablePlacement.Overlap(f,target));
     public static IEnumerable<Rect2> OutsideFrames(Rect2 source,double w,double h,double gap,IEnumerable<Rect2> frames)

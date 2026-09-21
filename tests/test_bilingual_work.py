@@ -6,9 +6,17 @@ from pathlib import Path
 from test_cad_translate import cad_translate
 from bilingual_work import inline_candidates
 from render_review import review_regions
+from translation_work import needs_translation
 
 
 class BilingualWorkTests(unittest.TestCase):
+    def test_numeric_formula_with_fullwidth_equals_does_not_request_translation(self):
+        row = dict(rawText='3×375＝1125', plainText='⟦P0001⟧×⟦P0002⟧＝⟦P0003⟧')
+        self.assertFalse(needs_translation(row, 'zh'))
+        row['rawText'] = '动载荷3×375＝1125'
+        row['plainText'] = '动载荷⟦P0001⟧×⟦P0002⟧＝⟦P0003⟧'
+        self.assertTrue(needs_translation(row, 'zh'))
+
     def test_french_bilingual_uses_complete_native_term_and_rejects_chinese_target(self):
         with tempfile.TemporaryDirectory() as tmp:
             job = Path(tmp)

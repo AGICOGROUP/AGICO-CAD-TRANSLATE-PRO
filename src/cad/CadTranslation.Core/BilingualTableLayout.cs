@@ -30,8 +30,26 @@ public static class BilingualTableLayout
             }
             if (!split) result.Add(cells);
         }
-        return result;
+        return result.Where(HasRealColumns).Where(cells =>
+        {
+            if (labels is null) return true;
+            bool title=BilingualTitlePanel.IsTitlePanel(labels.Where(t=>cells.Any(c=>c.Contains(
+                new Rect2(t.Bounds.Center.X,t.Bounds.Center.Y,t.Bounds.Center.X,t.Bounds.Center.Y)))).Select(t=>t.Text));
+            if (title) return true;
+            int populated=cells.Count(c=>labels.Any(t=>c.Contains(
+                new Rect2(t.Bounds.Center.X,t.Bounds.Center.Y,t.Bounds.Center.X,t.Bounds.Center.Y))));
+            if (cells.Length>64 && populated*5<cells.Length) return false;
+            if (cells.Any(c=>c.Width>0 && c.Height>0 &&
+                Math.Max(c.Width/c.Height,c.Height/c.Width)>50)) return false;
+            return true;
+        }).ToArray();
     }
+
+    // Stacked equipment boxes/signature fields do not establish a table. At
+    // least one row band must contain two cells sharing a vertical side.
+    public static bool HasRealColumns(Rect2[] cells) => cells.Any(a => cells.Any(b =>
+        a != b && (Math.Abs(a.Right-b.Left)<1e-5 || Math.Abs(b.Right-a.Left)<1e-5) &&
+        Math.Min(a.Top,b.Top)-Math.Max(a.Bottom,b.Bottom)>1e-5));
 
     // Topology may omit cells whose text crosses a line. Recover only real closed
     // strips from repeated horizontal spans and continuous vertical side edges.

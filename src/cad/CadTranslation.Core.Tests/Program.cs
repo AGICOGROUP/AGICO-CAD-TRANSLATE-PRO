@@ -3,11 +3,87 @@ using CadTranslation.Core;
 
 var tests = new (string Name, Action Run)[]
 {
+    ("single_column_frames_are_not_translation_tables", () => {
+        var cells=Enumerable.Range(0,4).Select(i=>new LayoutRegion("cell",LayoutRegionKind.TableCell,new Rect2(0,i*10,20,i*10+10))).ToArray();
+        AssertEx.Equal(0,BilingualTableLayout.TranslationGroups(cells,[]).Count);
+        AssertEx.Equal(0,BilingualTableLayout.TranslationGroups(cells.Take(2),[]).Count);
+    }),
+    ("signature_date_fields_are_recognized_exactly", () => {
+        foreach(var field in new[]{"日期","签名","实名","专 业"}) AssertEx.True(BilingualTitlePanel.IsTitleField(field));
+        AssertEx.False(BilingualTitlePanel.IsTitleField("设备生产日期说明"));
+    }),
+    ("table_copy_search_orders_wide_tables_toward_frame_interior", () => {
+        var table=new Rect2(60,0,90,20);
+        var candidates=BilingualTablePlacement.AdjacentCopySearch(table,2,[new Rect2(0,0,100,100)]).ToArray();
+        AssertEx.Equal(new Rect2(60,22,90,42),candidates[0]);
+        AssertEx.Equal(new Rect2(60,-22,90,-2),candidates[1]);
+        AssertEx.True(candidates.All(c=>Math.Abs(BilingualLocalPlacement.Gap(table,c)-2)<1e-6));
+    }),
+    ("corner_table_copies_prefer_the_inward_axis_for_each_shape", () => {
+        var frame=new Rect2(0,0,100,100);
+        var cases=new (Rect2 Table, Rect2 First, Rect2 Second)[] {
+            (new(-2,55,18,105),new(20,55,40,105),new(-24,55,-4,105)),
+            (new(82,55,102,105),new(60,55,80,105),new(104,55,124,105)),
+            (new(-2,-5,18,45),new(20,-5,40,45),new(-24,-5,-4,45)),
+            (new(82,-5,102,45),new(60,-5,80,45),new(104,-5,124,45)),
+            (new(0,80,40,100),new(0,58,40,78),new(0,102,40,122)),
+            (new(60,80,100,100),new(60,58,100,78),new(60,102,100,122)),
+            (new(0,0,40,20),new(0,22,40,42),new(0,-22,40,-2)),
+            (new(60,0,100,20),new(60,22,100,42),new(60,-22,100,-2))
+        };
+        foreach(var (table,first,second) in cases)
+        {
+            var candidates=BilingualTablePlacement.CompleteCopySearch(table,2,[],[frame]);
+            AssertEx.True(candidates.Count>=2 && candidates[0]==first && candidates[1]==second);
+            AssertEx.True(candidates.All(c=>Math.Abs(BilingualLocalPlacement.Gap(table,c)-2)<1e-6));
+        }
+    }),
+    ("horizontal_corner_table_uses_adjacent_bottom_before_remote_side", () => {
+        var table=new Rect2(70,0,100,10);
+        var frame=new Rect2(0,0,100,100);
+        var blockers=new[]{new Rect2(37,0,68,10),new Rect2(102,0,134,10)};
+        var candidates=BilingualTablePlacement.CompleteCopySearch(table,2,blockers,[frame]);
+        AssertEx.True(candidates.Count>=2);
+        AssertEx.Equal(new Rect2(70,12,100,22),candidates[0]);
+        AssertEx.Equal(new Rect2(70,-12,100,-2),candidates[1]);
+        AssertEx.False(candidates.Any(c=>Math.Abs(c.Left-table.Left)>table.Width+2 || Math.Abs(c.Bottom-table.Bottom)>table.Height+2));
+    }),
+    ("straddled_corner_table_recognizes_its_own_frame", () => {
+        var source=new Rect2(-2,55,18,105);
+        var candidate=new Rect2(20,55,40,105);
+        var own=new Rect2(0,0,100,100);
+        var other=new Rect2(19,50,50,110);
+        AssertEx.True(BilingualTablePlacement.AvoidsOtherTableFrames(source,candidate,[own]));
+        AssertEx.False(BilingualTablePlacement.AvoidsOtherTableFrames(source,candidate,[own,other]));
+    }),
+    ("dense_structural_linework_with_sparse_labels_is_not_a_table", () => {
+        var cells=Enumerable.Range(0,100).Select(i=>new LayoutRegion("beam",LayoutRegionKind.TableCell,
+            new Rect2((i%10)*10,(i/10)*10,(i%10+1)*10,(i/10+1)*10))).ToArray();
+        var labels=new[]{(new Rect2(2,2,4,4),"格栅"),(new Rect2(12,2,14,4),"钢梯")};
+        AssertEx.Equal(0,BilingualTableLayout.TranslationGroups(cells,[],labels).Count);
+        var sparseActual=new[]{cells[0],cells[1],cells[10],cells[11]};
+        AssertEx.Equal(1,BilingualTableLayout.TranslationGroups(sparseActual,[],labels).Count);
+    }),
+    ("tall_sliver_cells_in_a_cone_drawing_are_not_table_columns", () => {
+        var cells=new[]{new Rect2(0,0,50,2),new Rect2(50,0,100,2),new Rect2(49,2,50,100),
+            new Rect2(50,2,100,4),new Rect2(0,2,49,4)}
+            .Select(b=>new LayoutRegion("hopper",LayoutRegionKind.TableCell,b)).ToArray();
+        var labels=new[]{(new Rect2(10,1,11,1.5),"塞板"),(new Rect2(70,1,71,1.5),"钢板")};
+        AssertEx.Equal(0,BilingualTableLayout.TranslationGroups(cells,[],labels).Count);
+    }),
+    ("table_copy_search_never_jumps_past_nearby_labels", () => {
+        var table=new Rect2(100,0,140,80);
+        var label=new Rect2(70,79,72,81);
+        var candidates=BilingualTablePlacement.CompleteCopySearch(table,2,[label],[]);
+        AssertEx.Equal(4,candidates.Count);
+        AssertEx.True(candidates.All(c=>Math.Abs(BilingualLocalPlacement.Gap(table,c)-2)<1e-6));
+    }),
     ("table_supplement_can_clear_its_containing_frame_without_scaling", () => {
         var table=new Rect2(60,30,90,60);var frame=new Rect2(0,0,100,100);
         var copies=BilingualTablePlacement.AdjacentCopySearch(table,2,[frame]);
-        AssertEx.True(copies.Contains(new Rect2(102,30,132,60)));
+        AssertEx.True(copies.Contains(new Rect2(92,30,122,60)));
         AssertEx.True(copies.All(c=>c.Width==30 && c.Height==30));
+        AssertEx.False(copies.Contains(new Rect2(102,30,132,60)));
         AssertEx.False(BilingualTablePlacement.AdjacentCopySearch(table,2,[new Rect2(200,0,300,100)])
             .Any(c=>c.Left==302));
     }),
@@ -96,6 +172,10 @@ var tests = new (string Name, Action Run)[]
         AssertEx.True(BilingualFixedLabelPolicy.ContainsEmbeddedEnglish(@"{\fSimSun;图}{\fArial;号}\P{\fArial;DWG.}\PNo."));
         AssertEx.True(!BilingualFixedLabelPolicy.ContainsEmbeddedEnglish("图号 DWG"));
     }),
+    ("split_title_fields_with_protected_markers_stay_out_of_table_groups", () => {
+        AssertEx.True(BilingualTitlePanel.IsTitlePanel(["⟦P0001⟧工程", "⟦P0001⟧名称", "⟦P0001⟧设计"]));
+        AssertEx.True(!BilingualTitlePanel.IsTitlePanel(["工程", "设备名称", "审核设备"]));
+    }),
     ("roomy_table_cells_use_same_row_suffix_with_real_clearance", () => {
         var cell=new Rect2(0,0,100,10); var source=new Rect2(2,3,20,7);
         var slot=BilingualTablePlacement.AfterSource(cell,source,40,4,4,[source]);
@@ -109,9 +189,9 @@ var tests = new (string Name, Action Run)[]
         AssertEx.True(candidates.All(c=>c.Width==100 && c.Height==50 && Math.Abs(BilingualLocalPlacement.Gap(c,table)-2)<1e-6));
         AssertEx.True(candidates.All(c=>c.Left==table.Left || c.Bottom==table.Bottom));
     }),
-    ("table_copy_search_stays_on_one_adjacent_side_while_sliding", () => {
+    ("table_copy_search_keeps_full_alignment_on_four_sides", () => {
         var table=new Rect2(0,0,100,20); var candidates=BilingualTablePlacement.AdjacentCopySearch(table,5);
-        AssertEx.Equal(20,candidates.Count);
+        AssertEx.Equal(4,candidates.Count);
         foreach(var c in candidates)
         {
             bool right=Math.Abs(c.Left-105)<1e-9, left=Math.Abs(c.Right+5)<1e-9;
@@ -270,6 +350,28 @@ var tests = new (string Name, Action Run)[]
         AssertEx.True(!BilingualLabelEquivalence.Matches("Quicklime Silo", "Silo"));
         AssertEx.True(!BilingualLabelEquivalence.Matches("Pump 1", "Pump 2"));
         AssertEx.True(!BilingualLabelEquivalence.Matches("Project Name", "Project Manager"));
+    }),
+    ("bilingual_reuse_preserves_engineering_punctuation_and_word_boundaries", () => {
+        foreach (var pair in new[] {
+            ("Pump 1.5 MPa", "Pump 15 MPa"), ("Temperature -20 C", "Temperature 20 C"),
+            ("Motor AB-12", "Motor AB12"), ("X/Y direction", "XY direction"),
+            ("Air Flow", "Airflow"), ("Capacity 1,000 kg", "Capacity 1000 kg"),
+            ("Salt", "Slag"), ("Quicklime Silo", "Lime Silo") })
+            AssertEx.False(BilingualLabelEquivalence.Matches(pair.Item1, pair.Item2));
+        AssertEx.True(BilingualLabelEquivalence.Matches("  Bag\n Filter  ", "bag filter"));
+        AssertEx.True(BilingualLabelEquivalence.Matches("Pressure 1.5 MPa", "Pressure 1.5 MPa"));
+    }),
+    ("bilingual_inline_reuse_requires_the_complete_translation", () => {
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("精密袋滤器 Bag Filter", "Fine Bag Filter"));
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("空气 Airflow", "Air"));
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("压力 Pressure 15 MPa", "Pressure 1.5 MPa"));
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("出料口 Inlet", "Outlet"));
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("风机 Fan", "Ventilateur"));
+        AssertEx.True(BilingualLabelEquivalence.MatchesInline("精密袋滤器 Fine Bag Filter", "Fine Bag Filter"));
+        AssertEx.True(BilingualLabelEquivalence.MatchesInline("风机 Fan", "Fan"));
+        AssertEx.True(BilingualLabelEquivalence.MatchesInline("图号\nDWG.\nNo.", "Drawing No."));
+        AssertEx.True(BilingualLabelEquivalence.MatchesInline("6.04 冷却器\n6.04 Multi-tube Cooler", "6.04 Multi-tube Cooler"));
+        AssertEx.False(BilingualLabelEquivalence.MatchesInline("6.04 冷却器\n6.05 Multi-tube Cooler", "6.04 Multi-tube Cooler"));
     }),
     ("equipment_codes_are_not_embedded_english_translations", () => {
         foreach (string source in new[] {
@@ -1009,20 +1111,10 @@ internal static class Tests
 
     public static void BilingualNotePanelMayUseClearSpaceBeyondInnerFrame()
     {
-        string root = Directory.GetCurrentDirectory();
-        string source = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "cad",
-            "CadTranslation.AutoCAD2025",
-            "BilingualGroupLayout.cs"));
-
-        AssertEx.True(source.Contains(
-            "Union(new[]{frame.Bounds,expanded})",
-            StringComparison.Ordinal));
-        AssertEx.True(source.Contains(
-            "sourceHeight*60",
-            StringComparison.Ordinal));
+        var source=new Rect2(61,30,91,60);var frame=new Rect2(0,0,100,100);
+        var candidates=BilingualPanelPlacement.SideDestinations(source,120,2,[frame],[]).ToArray();
+        AssertEx.True(candidates.Contains(new Rect2(102,-60,132,60)));
+        AssertEx.True(candidates.All(c=>c.Width==source.Width && c.Top==source.Top && (c.Left>=source.Right || c.Right<=source.Left)));
     }
 
     public static void FragmentedNarrativeRegionExpandsToShortRowsInTheSameColumn()
@@ -1259,8 +1351,8 @@ internal static class Tests
     public static void EmergencyTextScalingCanFitDenseEnglishWithoutCrossingTenPercent()
     {
         AssertEx.Equal(0.25d, LayoutFitPolicy.ClampEmergencyHeightScale(0.25));
-        AssertEx.Equal(0.12d, LayoutFitPolicy.ClampEmergencyHeightScale(0.12));
-        AssertEx.Equal(0.10d, LayoutFitPolicy.ClampEmergencyHeightScale(0.04));
+        AssertEx.Equal(0.30d, LayoutFitPolicy.ClampEmergencyHeightScale(0.30));
+        AssertEx.Equal(0.25d, LayoutFitPolicy.ClampEmergencyHeightScale(0.04));
     }
 
     // Break caught: aggregate row height fits, but an individual rotated/wrapped
@@ -1341,7 +1433,7 @@ internal static class Tests
 
         AssertEx.True(Math.Abs(0.27 - scale) < 1e-9);
         AssertEx.Equal(1d, LayoutFitPolicy.AuditCorrectionScale(100, 100, 300, 200));
-        AssertEx.Equal(0.10d, LayoutFitPolicy.AuditCorrectionScale(10000, 10000, 100, 100));
+        AssertEx.Equal(0.25d, LayoutFitPolicy.AuditCorrectionScale(10000, 10000, 100, 100));
     }
 
     public static void AnchoredAvailableSizeRespectsTheNearestSlotBoundary()
