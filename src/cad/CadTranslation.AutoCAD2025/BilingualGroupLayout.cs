@@ -144,6 +144,22 @@ internal static class BilingualGroupLayout
                 // One fixed-width column. Translation growth changes height,
                 // never the block width or its reading order.
                 double width=group.Source.Width/CadLayoutGeometry.MTextMeasurementSafetyScale;
+                void AssignPanel(Rect2 destination,double panelHeight,IReadOnlyList<Rect2> sizes,double panelGap)
+                {
+                    double top=destination.Top;
+                    for(int i=0;i<group.Rows.Length;i++)
+                    {
+                        var slot=new Rect2(destination.Left,top-sizes[i].Height,destination.Right,top);
+                        result[group.Rows[i].RecordId]=new(slot,panelHeight,width,"note-block",display[i]);
+                        top-=sizes[i].Height+panelGap;
+                    }
+                    occupied[d.Name].Add(destination);
+                    foreach(var name in occupied.Keys.Where(n=>n!=d.Name))
+                        occupied[name].AddRange(InstanceOccupancyProjection.Project(destination,d.Name,name,baseline.BlockInstances));
+                    decisions.Add(new{strategy="note-block",source=group.Source,destination,recordIds=group.Rows.Select(t=>t.RecordId).ToArray(),height=panelHeight,columns=1,
+                        outsideContainingFrame=frame is not null && !containingFrames.Any(f=>f.Contains(destination))});
+                }
+                var crossingFallback=default((Rect2 Destination,double Height,IReadOnlyList<Rect2> Sizes,double Gap));
                 foreach(double scale in new[]{1.0,.9,.8,.7})
                 {
                     double height=sourceHeight*scale, gap=height*.45;
@@ -171,21 +187,24 @@ internal static class BilingualGroupLayout
                             if(rejected.Count<20)rejected.Add(new{height,width,destination,text=conflict});
                             continue;
                         }
-                        double top=destination.Top;
-                        for(int i=0;i<group.Rows.Length;i++)
+                        // A panel may cross linework only as a last resort: while a
+                        // text-clear position that leaves other views' geometry
+                        // untouched exists (above, below, left or right), it wins.
+                        if(BilingualTableCopy.CrossesDrawingGeometry(d,group.Source,destination,gap,containingFrames))
                         {
-                            var slot=new Rect2(destination.Left,top-sizes[i].Height,destination.Right,top);
-                            result[group.Rows[i].RecordId]=new(slot,height,width,"note-block",display[i]);
-                            top-=sizes[i].Height+gap;
+                            if(crossingFallback==default)crossingFallback=(destination,height,sizes.ToList(),gap);
+                            if(rejected.Count<20)rejected.Add(new{height,width,destination,reason="drawing-geometry"});
+                            continue;
                         }
-                        occupied[d.Name].Add(destination);
-                        foreach(var name in occupied.Keys.Where(n=>n!=d.Name))
-                            occupied[name].AddRange(InstanceOccupancyProjection.Project(destination,d.Name,name,baseline.BlockInstances));
-                        decisions.Add(new{strategy="note-block",source=group.Source,destination,recordIds=group.Rows.Select(t=>t.RecordId).ToArray(),height,columns=1,
-                            outsideContainingFrame=frame is not null && !containingFrames.Any(f=>f.Contains(destination))});
+                        AssignPanel(destination,height,sizes,gap);
                         placed=true;break;
                     }
                     if(placed) break;
+                }
+                if(!placed && crossingFallback.Sizes is { Count: > 0 })
+                {
+                    AssignPanel(crossingFallback.Destination,crossingFallback.Height,crossingFallback.Sizes,crossingFallback.Gap);
+                    placed=true;
                 }
                 if(!placed)
                 {

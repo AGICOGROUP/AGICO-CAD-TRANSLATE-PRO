@@ -325,7 +325,7 @@ internal static class BilingualTableCopy
         return handled;
     }
 
-    private static bool CrossesDrawingGeometry(CadDefinitionTopology definition, Rect2 source,
+    internal static bool CrossesDrawingGeometry(CadDefinitionTopology definition, Rect2 source,
         Rect2 destination, double gap, IEnumerable<Rect2> sourceFrames)
     {
         double inset=Math.Min(gap*.5,Math.Min(destination.Width,destination.Height)*.05);
