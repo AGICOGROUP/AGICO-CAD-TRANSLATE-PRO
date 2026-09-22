@@ -52,6 +52,7 @@ Practical failure classes seen in a whole-drawing run, to check before another a
 - Reading block-attribute values inside the placement path aborts the core console with exit -1 and no managed traceback. Judge template content by entity type and by exporter-reported text only.
 - A `First()`-style cell lookup throws when a text centre falls between grid lines; use a tolerant lookup and skip the miss.
 - Releasing every member of many failed tables at once floods the placement search and makes the run slow or fatal; release only the members that truly lack a target.
+- A sparse pseudo-table group (no changed requests or fewer than two texts) must release its members before skipping; otherwise group planning blocks the text for a copy that never happens and the run ends in `group-placement-unresolved` with no decision trace in `bilingual-table-layout.json` (fixed in `1ad49e5`).
 - A stale `artifacts/candidate-binding.json` makes `import` resume the previous staged candidate instead of running the corrected layout; move it aside for a corrected run.
 - Run long stages through the hidden launcher (`scripts/run_hidden.vbs`) so no console window reaches the user's desktop, and remove the one-shot scheduled task when the stage ends.
 
