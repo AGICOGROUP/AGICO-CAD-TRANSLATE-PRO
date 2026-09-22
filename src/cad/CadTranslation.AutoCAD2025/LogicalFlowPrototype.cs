@@ -622,8 +622,13 @@ internal static partial class LogicalFlowPrototype
         // 做|法|名|称, 室|内|外). They must merge into a single term whatever their
         // size: replacing every fragment with the whole phrase renders headers as
         // "ItemItem" or four overlapping "Method name" copies.
+        // Note-column ids belong to long narrative regions that own their layout;
+        // single characters there are ordinary words, not spaced headers. Table
+        // cells and merged cells do hold spaced headers, so they stay eligible.
+        static bool EligibleRegion(string regionId) => string.IsNullOrEmpty(regionId)
+            || !regionId.StartsWith("note-column", StringComparison.Ordinal);
         var candidates = auditRows
-            .Where(row => string.IsNullOrEmpty(row.RegionId) && manifestById.TryGetValue(row.RecordId, out ManifestRecord? record) &&
+            .Where(row => EligibleRegion(row.RegionId) && manifestById.TryGetValue(row.RecordId, out ManifestRecord? record) &&
                 translationById.ContainsKey(row.RecordId) && IsSingleCjk(record.RawText))
             .Select(row => new TitleCandidate(row, manifestById[row.RecordId]))
             .ToArray();
