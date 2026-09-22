@@ -32,7 +32,7 @@ public static class BilingualPanelPlacement
     {
         double width = source.Width;
         Rect2 Above(double edge) => new(source.Left, edge + gap, source.Left + width, edge + gap + height);
-        Rect2 Below(double edge) => new(source.Left, edge - gap - height, source.Left, edge - gap);
+        Rect2 Below(double edge) => new(source.Left, edge - gap - height, source.Left + width, edge - gap);
         var result = new List<Rect2> { Above(source.Top), Below(source.Bottom) };
         foreach (var frame in frames.Where(f => f.Contains(source)))
         { result.Add(Above(frame.Top)); result.Add(Below(frame.Bottom)); }
