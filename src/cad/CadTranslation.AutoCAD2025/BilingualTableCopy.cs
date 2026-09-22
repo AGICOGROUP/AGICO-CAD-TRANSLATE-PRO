@@ -65,7 +65,14 @@ internal static class BilingualTableCopy
                 var requests = sources.Where(t => changed.ContainsKey(t.RecordId) && !handled.Contains(t.RecordId)).ToArray();
                 // A real multi-row grid can have just one untranslated heading;
                 // numeric/code-only cells still establish its table structure.
-                if (requests.Length == 0 || sources.Length < 2) continue;
+                if (requests.Length == 0 || sources.Length < 2)
+                {
+                    // Not a complete-copy table: release members so group planning
+                    // keeps them on ordinary in-place label placement instead of
+                    // blocking a group that will never be copied.
+                    foreach (var t in sources) released?.Add(t.RecordId);
+                    continue;
+                }
                 Rect2 Cell(CadLayoutText t) => cells.Where(c => c.Contains(new Rect2(t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y,t.Source.Bounds.Center.X,t.Source.Bounds.Center.Y)))
                     .OrderBy(c => c.Area).First();
                 var reuse = new Dictionary<string,CadLayoutText>();
