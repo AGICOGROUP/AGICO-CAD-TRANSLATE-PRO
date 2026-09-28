@@ -1,9 +1,9 @@
 {
   "acceptedFor": "R25.0",
-  "coreDllSha256": "289b72f9c670301a275a20d9cfc539a3a90eb7e4fff74943f5a22fe75308d06e",
-  "pluginDllSha256": "7517ac2b5242a0ac44d282bf5391e2f1501f445981cfc0315264db801cfafe54",
-  "cycle": "export->assemble->import->audit-summary + visual review",
+  "pluginDllSha256": "3057947e86903dc9759c3c99eb71d50afe4222f6031322ea08635d67aaff55ec",
+  "coreDllSha256": "d41bfa165d1cd042833eb6649640cc6f956a571f32e058d52bc9aa274f87c955",
+  "cycle": "fresh synthetic DWG -> export -> assemble -> import -> saved-output checks -> native PNG review -> audit-summary deliveryReady=true",
   "date": "2026-09-28",
-  "job": "hcq2000-flow-20260928-02 (25-YX-1526 HCQ2000 工艺流程图, zh->en bilingual)",
-  "note": "built with -p:Platform=x64; native Core suite 218 PASS, python suite 119 PASS; audit gate passed with 28 medium risks confined to the dense CAXA title block (see SKILL.patch.md bilingual block-placement entry)"
+  "job": "tmp/native-skill-adoption-20260928/bilingual",
+  "note": "Targeted regression for complete source entity property inheritance. 12 additions, 1 existing pair reused, 0 layout risks. Synthetic fixture acceptance; no claim of production drawing quality/performance validation."
 }

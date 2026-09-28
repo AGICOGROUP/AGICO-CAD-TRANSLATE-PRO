@@ -1,5 +1,7 @@
 # Bilingual pipeline
 
+Apply [native CAD practices adapted for bilingual output](native-bilingual-practices.md) before translating and placing groups: reconstruct complete semantics, preserve source entities, keep paragraph typography consistent, verify font-specific symbols and inspect a fresh copy of the saved candidate. These practices complement the placement rules below; the monolingual replacement edit/reflow format is not this pipeline's input.
+
 Preserve original text, properties and geometry; add target-only MText. Export model space, every layout and recursively placed block definitions. Leave dormant block-library definitions unchanged and record their exclusion in `bilingual-scope.json`. Inside block definitions, variable `AttributeDefinition` entities are templates, not drawn text: translate their visible `AttributeReference` instances instead. Invisible attributes are also excluded from bilingual additions. Constant visible attributes remain eligible.
 
 ```powershell

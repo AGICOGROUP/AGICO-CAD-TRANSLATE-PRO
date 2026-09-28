@@ -1,5 +1,7 @@
 # Source/candidate visual review
 
+This receipt format applies to the existing bilingual/legacy runners. Native DWG replacement uses [its saved-output contract](../formats/dwg/replace/references/data-contracts.md) and actual sheet-by-sheet review; do not fabricate runner receipts for that separate workflow.
+
 Automatic checks do not establish visual acceptance. Review the actual final candidate yourself and write only its mode-specific, hash-bound receipt: `replace-visual-review.json` or `bilingual-visual-review.json`.
 
 ## Render readable evidence

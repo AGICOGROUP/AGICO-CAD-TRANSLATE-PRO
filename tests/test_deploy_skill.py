@@ -17,8 +17,11 @@ class DeploymentTests(unittest.TestCase):
             (target / "SKILL.md").write_text("old", encoding="utf-8")
             (target / "jobs").mkdir()
             (target / "jobs" / "drawing.dwg").write_bytes(b"original")
-            receipt = module.deploy(source, target, ["SKILL.md"], [])
+            receipt = module.deploy(source, target, ["SKILL.md"], [], backup_root=root / "archives")
             self.assertEqual("new", (target / "SKILL.md").read_text(encoding="utf-8"))
             self.assertEqual("old", (Path(receipt["backup"]) / "SKILL.md").read_text(encoding="utf-8"))
             self.assertEqual(b"original", (target / "jobs" / "drawing.dwg").read_bytes())
+            self.assertEqual([target / "SKILL.md"], list(target.rglob("SKILL.md")))
+            with self.assertRaises(ValueError):
+                module.deploy(source, target, ["SKILL.md"], [], backup_root=target / "archives")
             with self.assertRaises(ValueError): module.deploy(source, target, ["../outside"], [])

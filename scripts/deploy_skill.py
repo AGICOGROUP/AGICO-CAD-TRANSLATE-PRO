@@ -7,12 +7,12 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-ALLOWED = {"SKILL.md", "global.json", ".gitignore", "agents", "assets", "references", "scripts", "src", "tests", "docs"}
+ALLOWED = {"SKILL.md", "global.json", ".gitignore", "agents", "assets", "references", "scripts", "src", "tests", "docs", "formats"}
 
 def digest(path):
     with path.open("rb") as stream: return hashlib.file_digest(stream, "sha256").hexdigest()
 
-def deploy(source, target, files, removed):
+def deploy(source, target, files, removed, backup_root=None):
     source, target = source.resolve(), target.resolve()
     if target == Path(target.anchor) or target == source or target.is_relative_to(source):
         raise ValueError("Deployment requires a separate, bounded mounted directory")
@@ -25,7 +25,12 @@ def deploy(source, target, files, removed):
         if not src.is_relative_to(source) or not dst.is_relative_to(target): raise ValueError("Deployment path escapes root")
         if name in files and not src.is_file(): raise FileNotFoundError(src)
         paths.append((name, src, dst))
-    backup = target / "deploy-backups" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    # Historical SKILL.md files inside a mounted skill become duplicate skills.
+    # Keep recoverable versions outside both maintained and installed trees.
+    archive = Path(backup_root or Path.home() / ".codex" / "skill-archives" / "deployments").resolve()
+    if archive.is_relative_to(target) or archive.is_relative_to(source):
+        raise ValueError("Deployment archives must be outside skill roots")
+    backup = archive / target.name / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup.mkdir(parents=True, exist_ok=False)
     rows = []
     for name, src, dst in paths:

@@ -257,8 +257,10 @@ internal static class BilingualDrawingImporter
                     if (owner is null || owner.IsFromExternalReference) { unresolved.Add(row.RecordId); continue; }
                     using var added = new MText();
                     added.SetDatabaseDefaults(db);
-                    added.LayerId = original.LayerId;
-                    added.Color = original.Color;
+                    // Inherit all entity properties before setting text-specific
+                    // layout; layer/color alone lose linetype, weight and other
+                    // source overrides in nested blocks.
+                    added.SetPropertiesFrom(original);
                     added.TextStyleId = original switch { MText mt => mt.TextStyleId, DBText dt => dt.TextStyleId,
                         Dimension dm => dm.GetDimstyleData().Dimtxsty, _ => db.Textstyle };
                     added.Attachment = AttachmentPoint.TopLeft;
