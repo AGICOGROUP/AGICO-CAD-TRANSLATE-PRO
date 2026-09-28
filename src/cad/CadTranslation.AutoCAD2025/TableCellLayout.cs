@@ -64,12 +64,17 @@ internal static class TableCellLayout
                 text.TextHeight);
         }
 
+        double maximumWrappedHeight = target.SourceBounds is Bounds2d sourceBox &&
+            sourceBox.MaxY - sourceBox.MinY > 0
+            ? (sourceBox.MaxY - sourceBox.MinY) * LayoutFitPolicy.MaximumWrappedHeightGrowth
+            : double.PositiveInfinity;
         (double widthScale, double heightScale, bool fits) = Fit(
             text,
             target.RestoredText,
             allowed,
             originalHeight,
-            absoluteMinimumHeight);
+            absoluteMinimumHeight,
+            maximumWrappedHeight);
         if (!fits)
         {
             ClampInside(text, allowed);
@@ -82,7 +87,9 @@ internal static class TableCellLayout
             replaced.Erase();
         }
 
-        var actions = new List<string> { "wrap" };
+        var actions = new List<string>();
+        if (text.Width > 0) actions.Add("wrap");
+        else actions.Add("keep-one-line");
         if (widthScale < 0.999) actions.Add("compress-width");
         if (heightScale < 0.999) actions.Add("shrink-height");
         if (!TextAnchorPolicy.IsPreserved(
@@ -114,13 +121,14 @@ internal static class TableCellLayout
         string contents,
         Bounds2d allowed,
         double originalHeight,
-        double? absoluteMinimumHeight)
+        double? absoluteMinimumHeight,
+        double maximumWrappedHeight)
     {
         foreach (double widthScale in CadLayoutGeometry.Steps(1, LayoutFitPolicy.MinimumWidthScale, 0.05))
         {
             text.Contents = CadLayoutGeometry.FormatWidth(contents, widthScale);
             text.TextHeight = originalHeight;
-            if (TryMoveInside(text, allowed))
+            if (TryMoveInside(text, allowed) && FitsHeightBudget(text, maximumWrappedHeight))
             {
                 return (widthScale, 1, true);
             }
@@ -130,23 +138,47 @@ internal static class TableCellLayout
             ? LayoutFitPolicy.ClampReadableHeightScale(floor / originalHeight)
             : LayoutFitPolicy.MinimumHeightScale;
         foreach (double heightScale in CadLayoutGeometry.Steps(
-                     0.95,
-                     minimumHeightScale,
-                     0.05))
+                      0.95,
+                      minimumHeightScale,
+                      0.05))
         {
             text.Contents = CadLayoutGeometry.FormatWidth(contents, LayoutFitPolicy.MinimumWidthScale);
             text.TextHeight = originalHeight * heightScale;
-            if (TryMoveInside(text, allowed))
+            if (TryMoveInside(text, allowed) && FitsHeightBudget(text, maximumWrappedHeight))
             {
                 return (LayoutFitPolicy.MinimumWidthScale, heightScale, true);
             }
         }
 
+        // Wrapping would push the label past its height budget, which is how a long
+        // target ends up on top of the table above it. Keep the original single line
+        // and pay with a smaller glyph instead of invading the neighbouring cells.
+        double singleLineWidth = text.Width;
+        text.Width = 0;
+        foreach (double heightScale in CadLayoutGeometry.Steps(
+                      0.95,
+                      LayoutFitPolicy.EmergencyMinimumHeightScale,
+                      0.05))
+        {
+            text.Contents = CadLayoutGeometry.FormatWidth(contents, LayoutFitPolicy.MinimumWidthScale);
+            text.TextHeight = originalHeight * heightScale;
+            if (TryMoveInside(text, allowed) && FitsHeightBudget(text, maximumWrappedHeight))
+            {
+                return (LayoutFitPolicy.MinimumWidthScale, heightScale, true);
+            }
+        }
+
+        text.Width = singleLineWidth;
         return (
             LayoutFitPolicy.MinimumWidthScale,
             minimumHeightScale,
             false);
     }
+
+    private static bool FitsHeightBudget(MText text, double maximumHeight) =>
+        !IsFinite(maximumHeight) ||
+        CadLayoutGeometry.TryFreshBounds(text) is not Bounds2d bounds ||
+        bounds.MaxY - bounds.MinY <= maximumHeight;
 
     private static void ClampInside(MText text, Bounds2d allowed)
     {

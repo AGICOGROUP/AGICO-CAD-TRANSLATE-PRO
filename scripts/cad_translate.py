@@ -18,6 +18,30 @@ PLUGIN_DIR = SKILL_ROOT / "assets" / "plugin"
 AUTOCAD_2025_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2025.bundle\Contents\Windows")
 AUTOCAD_2027_PLUGIN_DIR = Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2027.bundle\Contents\Windows")
 PLUGIN_FILES = ("CadTranslation.AutoCAD2025.dll", "CadTranslation.Core.dll", "CadTranslation.Contracts.dll")
+# Presence of this file in a package directory is the only proof that the build ran a full drawing cycle
+# on a real host of that release; compiling against reference assemblies is not acceptance.
+ACCEPTANCE_MARKER = "HOST-ACCEPTED.json"
+# Registry release key (R<major.minor>) / Release value to AutoCAD year. Shared-agent users install any
+# release, so every host is classified instead of failing later inside NETLOAD.
+AUTOCAD_RELEASE_YEARS = {
+    "15.0": 2000, "15.6": 2002, "16.0": 2004, "16.1": 2005, "16.2": 2006,
+    "17.0": 2007, "17.1": 2008, "17.2": 2009, "18.0": 2010, "18.1": 2011, "18.2": 2012,
+    "19.0": 2013, "19.1": 2014, "20.0": 2015, "20.1": 2016, "21.0": 2017, "22.0": 2018,
+    "23.0": 2019, "23.1": 2020, "24.0": 2021, "24.1": 2022, "24.2": 2023, "24.3": 2024,
+    "25.0": 2025, "26.0": 2027,
+}
+# Years whose plugin build ships inside assets/plugin; 2027 is declared but built separately (.NET 10).
+SHIPPED_PLUGIN_YEARS = frozenset({2025})
+DECLARED_PLUGIN_YEARS = frozenset({2025, 2027})
+CORE_CONSOLE_FIRST_YEAR = 2013  # accoreconsole.exe headless host ships from AutoCAD 2013
+MANAGED_API_FIRST_YEAR = 2005   # ObjectARX .NET API ships from AutoCAD 2005
+# Official support window: AutoCAD 2020-2025 only. Older releases are reported, never ported.
+SUPPORTED_HOST_FIRST_YEAR = 2020
+APPLICATION_PLUGINS_ROOT = Path(r"C:\Program Files\Autodesk\ApplicationPlugins")
+YEAR_TO_RELEASE = {year: f"R{key}" for key, year in AUTOCAD_RELEASE_YEARS.items()}
+RELEASE_TO_YEAR = {value: key for key, value in YEAR_TO_RELEASE.items()}
+# Host years the plugin project targets through -p:CadHostFramework (see src/cad/Directory.Build.props).
+BUILDABLE_LEGACY_FRAMEWORKS = {2020: "net47", 2021: "net48", 2022: "net48", 2023: "net48", 2024: "net48"}
 TARGET_LANGUAGE_RESIDUE = re.compile(
     r"[\u2e80-\u2fff\u3000-\u303f\u31c0-\u31ef\u3400-\u4dbf"
     r"\u4e00-\u9fff\uf900-\ufaff\ufe10-\ufe1f\ufe30-\ufe4f"
@@ -41,42 +65,363 @@ def sha256(path: Path) -> str:
             digest.update(block)
     return digest.hexdigest()
 
+def host_runtime(year: int | None) -> str | None:
+    """Managed runtime a plugin build must target for that AutoCAD year."""
+    if year is None:
+        return None
+    if year < MANAGED_API_FIRST_YEAR:
+        return "none (ObjectARX C++/VBA/COM only)"
+    if year <= 2009:
+        return ".NET Framework 2.0/3.5"
+    if year <= 2012:
+        return ".NET Framework 3.5"
+    if year <= 2014:
+        return ".NET Framework 4.0"
+    if year <= 2019:
+        return ".NET Framework 4.5-4.7"
+    if year == 2020:
+        return ".NET Framework 4.7"
+    if year <= 2024:
+        return ".NET Framework 4.8"
+    if year == 2025:
+        return ".NET 8"
+    if year == 2027:
+        return ".NET 10"
+    return "unknown"
+
+def packaged_plugin_dir(release: str) -> Path:
+    """Where a loadable build for that release lives inside the skill package."""
+    # R25.0 keeps the historical flat layout; every other release gets its own directory so a
+    # per-release build can never be replaced by the .NET 8 (AutoCAD 2025) DLLs.
+    return PLUGIN_DIR if release == "R25.0" else PLUGIN_DIR / release
+
+def packaged_plugin_complete(directory: Path) -> bool:
+    return directory.is_dir() and all((directory / name).is_file() for name in PLUGIN_FILES)
+
+def packaged_plugin_accepted(directory: Path) -> bool:
+    """True only when the acceptance marker covers the package present right now.
+
+    A marker is written after a full drawing cycle passed. Checking that it merely exists would let a
+    later rebuild inherit an acceptance it never earned, so the recorded artefact hashes must match.
+    """
+    marker = directory / ACCEPTANCE_MARKER
+    if not marker.is_file():
+        return False
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    checks = (("pluginDllSha256", PLUGIN_FILES[0]), ("coreDllSha256", PLUGIN_FILES[1]))
+    if not all((directory / name).is_file() for _, name in checks):
+        return False
+    return all(data.get(key) == sha256(directory / name) for key, name in checks)
+
+def accepted_plugin_years() -> set[int]:
+    years = {year for year in SHIPPED_PLUGIN_YEARS if packaged_plugin_accepted(PLUGIN_DIR)}
+    if PLUGIN_DIR.is_dir():
+        for entry in PLUGIN_DIR.iterdir():
+            year = RELEASE_TO_YEAR.get(entry.name.upper()) if entry.is_dir() else None
+            if year and packaged_plugin_complete(entry) and packaged_plugin_accepted(entry):
+                years.add(year)
+    return years
+
+def shipped_plugin_years() -> set[int]:
+    """Host years with a ready-to-deploy build: the flat 2025 package plus any per-release folder."""
+    years = set(SHIPPED_PLUGIN_YEARS)
+    if PLUGIN_DIR.is_dir():
+        for entry in PLUGIN_DIR.iterdir():
+            year = RELEASE_TO_YEAR.get(entry.name.upper()) if entry.is_dir() else None
+            if year and packaged_plugin_complete(entry):
+                years.add(year)
+    return years
+
+def application_plugins_bundle(year: int) -> Path:
+    return APPLICATION_PLUGINS_ROOT / f"CadTranslation{year}.bundle" / "Contents" / "Windows"
+
+def per_user_bundle(year: int) -> Path:
+    """Per-user bundle location AutoCAD itself supports; the deployment fallback for standard users."""
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / "Autodesk" / "ApplicationPlugins" / f"CadTranslation{year}.bundle" / "Contents" / "Windows"
+
+def _dir_writable(directory: Path) -> bool:
+    """Standard users hold only RX on Program Files, so probe the deepest existing ancestor."""
+    probe = directory
+    while not probe.exists():
+        probe = probe.parent
+    return os.access(probe, os.W_OK)
+
+def deployable_bundle(year: int) -> Path:
+    bundle = AUTOCAD_2025_PLUGIN_DIR if year == 2025 else application_plugins_bundle(year)
+    if not _dir_writable(bundle):
+        # NETLOAD takes an absolute path, so the DLLs only need a stable writable location;
+        # a standard account cannot create directories under Program Files.
+        return per_user_bundle(year)
+    return bundle
+
+def build_hint(year: int | None, root: str | None) -> dict[str, object] | None:
+    """Exact build command for a host the package cannot serve yet, or why it cannot be built."""
+    if year is None or year in shipped_plugin_years():
+        return None
+    release = YEAR_TO_RELEASE.get(year)
+    if year < CORE_CONSOLE_FIRST_YEAR:
+        return {"buildable": False, "hostFramework": None, "command": None, "packageDir": None,
+                "blocker": f"AutoCAD {year} has no accoreconsole.exe; the headless pipeline needs a separate GUI-driven execution path"}
+    if year >= 2025:
+        framework, blocker = ("net8.0" if year <= 2026 else "net10.0"), None
+    else:
+        framework = BUILDABLE_LEGACY_FRAMEWORKS.get(year)
+        blocker = None if framework else (
+            f"AutoCAD {year} is outside the official support window "
+            f"(AutoCAD {SUPPORTED_HOST_FIRST_YEAR}-2025); no plugin build is planned"
+        )
+    command = ["dotnet", "build", "src/cad/CadTranslation.AutoCAD2025/CadTranslation.AutoCAD2025.csproj",
+               "-c", "Release", f"-p:AutoCADRelease={year}"]
+    if framework:
+        command.append(f"-p:CadHostFramework={framework}")
+    if framework in ("net8.0", "net10.0"):
+        command.append("-p:Platform=x64")
+    # Legacy builds take reference assemblies from the official AutoCAD.NET NuGet packages, so a local
+    # install of that release is optional; pass AutoCADDir only when the host really is installed here.
+    if root:
+        command.append(f'-p:AutoCADDir="{root}"')
+    return {"buildable": bool(framework), "hostFramework": framework, "command": " ".join(command),
+            "packageDir": f"assets/plugin/{release}/" if release else None, "blocker": blocker,
+            "note": "copy the build output DLLs into packageDir; the runner then deploys them by content hash"}
+
+def host_support(year: int | None, core_console: bool, packaged: bool = False) -> tuple[str, list[str]]:
+    """Classify a host: supported | build-required | port-required | out-of-window | unsupported."""
+    if year is None:
+        return "unknown", ["AutoCAD year could not be derived from the registry release or install path"]
+    if year < MANAGED_API_FIRST_YEAR:
+        return "unsupported", [f"AutoCAD {year} exposes no .NET API; the packaged engine cannot load in it"]
+    reasons: list[str] = []
+    if not core_console:
+        reasons.append(f"no accoreconsole.exe; the headless host ships from AutoCAD {CORE_CONSOLE_FIRST_YEAR}")
+    if year < CORE_CONSOLE_FIRST_YEAR:
+        return "unsupported", reasons + [f"AutoCAD {year} needs the separate GUI-driven execution path (not implemented)"]
+    if packaged or year in SHIPPED_PLUGIN_YEARS:
+        return "supported", reasons
+    if year < SUPPORTED_HOST_FIRST_YEAR:
+        return "out-of-window", reasons + [
+            f"AutoCAD {year} is outside the official support window (AutoCAD {SUPPORTED_HOST_FIRST_YEAR}-2025); "
+            "no plugin build is planned - use a 2020-2025 host or a central execution machine",
+        ]
+    if year in DECLARED_PLUGIN_YEARS:
+        return "build-required", reasons + [f"AutoCAD {year} needs its own {host_runtime(year)} plugin build deployed to its ApplicationPlugins bundle"]
+    return "port-required", reasons + [
+        f"AutoCAD {year} runs on {host_runtime(year)}; no build packaged in assets/plugin/{YEAR_TO_RELEASE.get(year, 'R?')}/",
+    ]
+
+def registry_hosts() -> list[dict[str, object]]:
+    """Read-only inventory of every installed Autodesk AutoCAD release and product."""
+    hosts: list[dict[str, object]] = []
+    if os.name != "nt":
+        return hosts
+    try:
+        import winreg
+    except ImportError:
+        return hosts
+    seen: set[str] = set()
+    for hive_name in ("HKEY_LOCAL_MACHINE", "HKEY_CURRENT_USER"):
+        hive = getattr(winreg, hive_name, None)
+        if hive is None:
+            continue
+        try:
+            with winreg.OpenKey(hive, r"SOFTWARE\Autodesk\AutoCAD") as releases:
+                release_names = [winreg.EnumKey(releases, index) for index in range(winreg.QueryInfoKey(releases)[0])]
+        except (OSError, AttributeError):
+            continue
+        for release_name in release_names:
+            if not re.fullmatch(r"R\d+(?:\.\d+)?", release_name, re.IGNORECASE):
+                continue
+            release_path = rf"SOFTWARE\Autodesk\AutoCAD\{release_name}"
+            year = AUTOCAD_RELEASE_YEARS.get(release_name[1:].lower()) or AUTOCAD_RELEASE_YEARS.get(release_name[1:])
+            try:
+                with winreg.OpenKey(hive, release_path) as products:
+                    product_names = [winreg.EnumKey(products, index) for index in range(winreg.QueryInfoKey(products)[0])]
+            except (OSError, AttributeError):
+                continue
+            for product_name in product_names:
+                if product_name == "InstalledProducts":
+                    continue
+                values: dict[str, str] = {}
+                try:
+                    with winreg.OpenKey(hive, rf"{release_path}\{product_name}") as product:
+                        for index in range(winreg.QueryInfoKey(product)[1]):
+                            name, value, _ = winreg.EnumValue(product, index)
+                            if isinstance(value, str) and value.strip():
+                                values[str(name)] = value.strip()
+                except (OSError, AttributeError):
+                    continue
+                location = values.get("AcadLocation") or values.get("Location")
+                if not location:
+                    continue
+                root = Path(location.rstrip("\\/"))
+                key = str(root).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                release_value = values.get("Release", "")
+                year_from_value = None
+                match = re.match(r"(\d+\.\d+)", release_value)
+                if match:
+                    year_from_value = AUTOCAD_RELEASE_YEARS.get(match.group(1))
+                hosts.append({
+                    "release": release_name.upper(),
+                    "productKey": product_name,
+                    "root": str(root),
+                    "releaseValue": release_value or None,
+                    "productName": values.get("ProductName"),
+                    "year": year_from_value or year,
+                    "coreConsoleExists": (root / "accoreconsole.exe").is_file(),
+                    "hive": hive_name,
+                })
+    return hosts
+
+def host_compatibility(autocad_root: Path | None = None) -> dict[str, object]:
+    """Report what the installed host can and cannot run, without touching the registry write side."""
+    root = absolute(autocad_root) if autocad_root is not None else None
+    entry: dict[str, object] | None = None
+    hosts = registry_hosts()
+    if root is not None:
+        for host in hosts:
+            if str(absolute(host["root"])).lower() == str(root).lower():
+                entry = host
+                break
+    if entry is None:
+        year = None
+        match = re.search(r"AutoCAD\s+(\d{4})", str(root) if root else "", re.IGNORECASE)
+        if match:
+            year = int(match.group(1))
+        entry = {
+            "release": None,
+            "productKey": None,
+            "root": str(root) if root else None,
+            "releaseValue": None,
+            "productName": None,
+            "year": year,
+            "coreConsoleExists": bool(root and (root / "accoreconsole.exe").is_file()),
+            "hive": None,
+        }
+    year = entry["year"] if isinstance(entry["year"], int) else None
+    release = entry["release"] or (YEAR_TO_RELEASE.get(year) if year else None)
+    packaged = bool(year and year in shipped_plugin_years())
+    accepted = bool(year and year in accepted_plugin_years())
+    support, reasons = host_support(year, bool(entry["coreConsoleExists"]), packaged)
+    if root is not None and not Path(str(entry["root"])).exists():
+        reasons = ["install root does not exist"] + reasons
+    warnings: list[str] = []
+    if packaged and not accepted:
+        warnings.append(
+            f"the AutoCAD {year} package is compile-verified only: no full drawing cycle has passed on a "
+            f"real AutoCAD {year} host, so treat its first run as unverified"
+        )
+    return {
+        "root": entry["root"],
+        "year": year,
+        "release": release,
+        "releaseValue": entry["releaseValue"],
+        "productKey": entry["productKey"],
+        "productName": entry["productName"],
+        "coreConsoleExists": entry["coreConsoleExists"],
+        "pluginRuntime": host_runtime(year) if year else None,
+        "packagedPluginRuntime": host_runtime(year) if packaged else None,
+        "packagedPluginAvailable": packaged,
+        "packagedPluginAccepted": accepted,
+        "packagedPluginDir": str(packaged_plugin_dir(release)) if release else None,
+        "support": support,
+        "reasons": reasons,
+        "warnings": warnings,
+        "buildHint": build_hint(year, entry["root"] if isinstance(entry["root"], str) else None),
+    }
+
+def host_compat_report() -> dict[str, object]:
+    """Whole-machine inventory plus the host this runner would pick."""
+    hosts = registry_hosts()
+    packaged_years = shipped_plugin_years()
+    accepted_years = accepted_plugin_years()
+    detailed = []
+    for host in hosts:
+        year = host["year"] if isinstance(host["year"], int) else None
+        release = host["release"] or (YEAR_TO_RELEASE.get(year) if year else None)
+        packaged = bool(year and year in packaged_years)
+        support, reasons = host_support(year, bool(host["coreConsoleExists"]), packaged)
+        detailed.append({**host, "pluginRuntime": host_runtime(year) if year else None,
+                         "packagedPluginDir": str(packaged_plugin_dir(release)) if release else None,
+                         "packagedPluginAvailable": packaged,
+                         "packagedPluginAccepted": bool(year and year in accepted_years),
+                         "support": support, "reasons": reasons,
+                         "buildHint": build_hint(year, host["root"] if isinstance(host["root"], str) else None)})
+    chosen = discover_autocad()
+    selected = host_compatibility(chosen)
+    return {
+        "status": "ready" if selected["support"] == "supported" else "blocked",
+        "selectedRoot": str(chosen),
+        "selectedHost": selected,
+        "warnings": selected.get("warnings") or [],
+        "installedHosts": detailed,
+        "packagedPluginYears": sorted(packaged_years),
+        "acceptedPluginYears": sorted(accepted_years),
+        "declaredPluginYears": sorted(DECLARED_PLUGIN_YEARS),
+    }
+
 def autocad_release(autocad_root: Path) -> str:
     match = re.search(r"AutoCAD\s+(\d{4})", str(autocad_root), re.IGNORECASE)
     year = int(match.group(1)) if match else 2025
-    releases = {2025: "R25.0", 2027: "R26.0"}
-    if year not in releases:
-        raise ValueError(f"Unsupported AutoCAD release year: {year}")
-    return releases[year]
+    packaged_years = shipped_plugin_years()
+    if year in DECLARED_PLUGIN_YEARS or year in packaged_years:
+        return YEAR_TO_RELEASE[year]
+    support, reasons = host_support(year, (absolute(autocad_root) / "accoreconsole.exe").is_file(), year in packaged_years)
+    detail = "; ".join(reasons) or "no packaged plugin build"
+    hint = build_hint(year, str(absolute(autocad_root)))
+    remedy = (hint or {}).get("command") or (hint or {}).get("blocker") or "no build path for this release"
+    supported = ", ".join(str(value) for value in sorted(packaged_years | DECLARED_PLUGIN_YEARS))
+    raise ValueError(
+        f"Unsupported AutoCAD host {year} at {autocad_root} [{support}]: {detail}. "
+        f"Usable plugin years: {supported}. Next step: {remedy}. Run `host-compat` for the full inventory."
+    )
 
 def runtime_plugin_dir(autocad_root: Path) -> Path:
     if os.environ.get("CAD_TRANSLATE_PLUGIN_DIR"):
         return absolute(os.environ["CAD_TRANSLATE_PLUGIN_DIR"])
-    if autocad_release(autocad_root) == "R26.0":
+    release = autocad_release(autocad_root)
+    if release == "R26.0":
         return AUTOCAD_2027_PLUGIN_DIR  # Separately built .NET 10 runtime.
     # Select the package shipped with this checkout, never a stale global DLL.
-    fingerprints = ''.join(sha256(PLUGIN_DIR / name) for name in PLUGIN_FILES)
+    source = packaged_plugin_dir(release)
+    fingerprints = ''.join(sha256(source / name) for name in PLUGIN_FILES)
     version = hashlib.sha256(fingerprints.encode()).hexdigest()[:20]
-    return AUTOCAD_2025_PLUGIN_DIR / ('package-' + version)
+    year = RELEASE_TO_YEAR[release]
+    bundle = deployable_bundle(year)
+    return bundle / ('package-' + version)
 
 def ensure_runtime_plugin(autocad_root: Path) -> Path:
+    release = autocad_release(autocad_root)
     directory = runtime_plugin_dir(autocad_root)
-    if not os.environ.get("CAD_TRANSLATE_PLUGIN_DIR") and autocad_release(autocad_root) == "R25.0":
+    if not os.environ.get("CAD_TRANSLATE_PLUGIN_DIR") and release != "R26.0":
+        source_dir = packaged_plugin_dir(release)
+        if not packaged_plugin_complete(source_dir):
+            raise RuntimeError(
+                f'No packaged plugin for AutoCAD release {release}: expected {source_dir}. '
+                'Run `host-compat` for the build command that produces it.'
+            )
         directory.mkdir(parents=True, exist_ok=True)
-        for name in (*PLUGIN_FILES, 'CadTranslation.AutoCAD2025.deps.json'):
-            source, target = PLUGIN_DIR / name, directory / name
-            if name not in PLUGIN_FILES and not source.is_file():
-                continue
+        # net4x packages carry their own System.Text.Json closure (nine extra assemblies), so deploy
+        # every file in the package instead of only the three plugin assemblies; each copy is verified.
+        for source in sorted(path for path in source_dir.iterdir() if path.is_file()):
+            target = directory / source.name
             if not target.is_file() or sha256(target) != sha256(source):
                 shutil.copy2(source, target)
             if sha256(target) != sha256(source):
-                raise RuntimeError('Runtime deployment hash mismatch: ' + name)
+                raise RuntimeError('Runtime deployment hash mismatch: ' + source.name)
     if any(not (directory / name).is_file() for name in PLUGIN_FILES):
         raise RuntimeError('Incomplete CAD runtime: ' + str(directory))
     return directory
 
 def profile(release: str = "R25.0") -> dict[str, object]:
-    if release not in {"R25.0", "R26.0"}:
+    if not re.fullmatch(r"R\d+(?:\.\d+)?", release or ""):
         raise ValueError(f"Unsupported AutoCAD registry release: {release}")
     report: dict[str, object] = {"initialized": False, "name": None, "writable": False, "release": release}
     if os.name != "nt":
@@ -112,13 +457,32 @@ def doctor(source: Path | None = None, autocad_root: Path = AUTOCAD_2025) -> dic
     if source is not None:
         source = absolute(source)
         source_report = {"path": str(source), "exists": source.is_file(), "extensionSupported": source.suffix.lower() in (".dwg", ".dxf")}
-    plugin_dir = runtime_plugin_dir(root)
-    files = {name: (plugin_dir / name).is_file() for name in PLUGIN_FILES}
-    preflight = profile(autocad_release(root))
-    ready = (root / "accoreconsole.exe").is_file() and all(files.values()) and bool(preflight["initialized"])
+    compatibility = host_compatibility(root)
+    console_exists = bool(root / "accoreconsole.exe") and (root / "accoreconsole.exe").is_file()
+    try:
+        plugin_dir: Path | None = runtime_plugin_dir(root)
+        files = {name: (plugin_dir / name).is_file() for name in PLUGIN_FILES}
+        preflight = profile(autocad_release(root))
+        host_error: str | None = None
+    except ValueError as error:
+        plugin_dir, files, host_error = None, {}, str(error)
+        preflight = {"initialized": False, "name": None, "writable": False, "release": None, "detail": host_error}
+    blockers: list[str] = list(compatibility["reasons"])
+    if host_error and host_error not in blockers:
+        blockers.append(host_error)
+    if not console_exists:
+        blockers.append(f"accoreconsole.exe not found in {root}")
+    if host_error is None:
+        if not all(files.values()):
+            blockers.append(f"packaged plugin DLLs missing from {plugin_dir}")
+        if not preflight["initialized"]:
+            blockers.append(f"no initialized AutoCAD profile: {preflight.get('detail')}")
+    ready = host_error is None and compatibility["support"] == "supported" and console_exists \
+        and all(files.values()) and bool(preflight["initialized"])
     if source is not None:
         ready = ready and bool(source_report["exists"]) and bool(source_report["extensionSupported"])
-    return {"status": "ready" if ready else "blocked", "autocad": {"root": str(root), "coreConsoleExists": (root / "accoreconsole.exe").is_file()}, "plugin": {"directory": str(plugin_dir), "files": files}, "profile": preflight, "source": source_report}
+    seen: set[str] = set()
+    return {"status": "ready" if ready else "blocked", "autocad": {"root": str(root), "coreConsoleExists": console_exists}, "hostCompatibility": compatibility, "warnings": list(compatibility.get("warnings") or []), "blockers": [item for item in blockers if not (item in seen or seen.add(item))], "plugin": {"directory": str(plugin_dir) if plugin_dir else None, "files": files}, "profile": preflight, "source": source_report}
 
 def assert_source(source: Path) -> None:
     if not source.is_file() or source.suffix.lower() not in (".dwg", ".dxf"):
@@ -591,7 +955,11 @@ def verify_export_seal(job: Path, config: dict[str, object]) -> None:
 def require_ready(source: Path, autocad_root: Path) -> dict[str, object]:
     if "windowsapps" in str(Path(sys.executable).resolve()).lower():
         raise RuntimeError("Refusing WindowsApps Python alias; use real CPython.")
-    ensure_runtime_plugin(autocad_root)
+    try:
+        ensure_runtime_plugin(autocad_root)
+    except ValueError as error:
+        # Unsupported host release: report the version blockers instead of the raw release error.
+        raise RuntimeError("AutoCAD preflight blocked: " + json.dumps(doctor(source, autocad_root), ensure_ascii=False)) from error
     report = doctor(source, autocad_root)
     if report["status"] != "ready": raise RuntimeError("AutoCAD preflight blocked: " + json.dumps(report, ensure_ascii=False))
     return report
@@ -847,23 +1215,21 @@ def discover_autocad() -> Path:
         return absolute(configured)
     if (AUTOCAD_2025 / "accoreconsole.exe").is_file():
         return AUTOCAD_2025
-    if os.name == "nt":
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Autodesk\AutoCAD\R25.0") as root:
-                for index in range(winreg.QueryInfoKey(root)[0]):
-                    with winreg.OpenKey(root, winreg.EnumKey(root, index)) as product:
-                        for name in ("AcadLocation", "Location"):
-                            try:
-                                path = Path(winreg.QueryValueEx(product, name)[0])
-                                if (path / "accoreconsole.exe").is_file(): return path
-                            except OSError: pass
-        except OSError: pass
+    # Newest release the packaged plugin can load in; otherwise the newest console host, so preflight
+    # reports the real version blocker instead of a missing-install error.
+    ranked = sorted((host for host in registry_hosts() if Path(str(host["root"])).exists()),
+                    key=lambda host: (host["year"] or 0), reverse=True)
+    packaged = shipped_plugin_years()
+    for require_shipped in (True, False):
+        for host in ranked:
+            if host["coreConsoleExists"] and (not require_shipped or host["year"] in packaged):
+                return Path(str(host["root"]))
     return AUTOCAD_2025
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(); parser.add_argument("--autocad-root", type=Path, default=discover_autocad()); sub = parser.add_subparsers(dest="command", required=True)
     doctor_cmd = sub.add_parser("doctor"); doctor_cmd.add_argument("--source", type=Path)
+    sub.add_parser("host-compat", help="Read-only inventory of installed AutoCAD hosts and the support tier of each")
     export = sub.add_parser("export"); export.add_argument("--source", type=Path, required=True); export.add_argument("--job", type=Path, required=True); export.add_argument("--source-language", default="zh-CN"); export.add_argument("--target-language", default="en"); export.add_argument("--timeout-seconds", type=int); export.add_argument("--output-mode", choices=sorted(OUTPUT_MODES), default="replace")
     export.add_argument("--retry-from", type=Path, help="Previous attempt of this same task; carry its full wall-clock timing, not its CAD result")
     prepared = sub.add_parser("prepare-translations"); prepared.add_argument("--job", type=Path, required=True); prepared.add_argument("--max-source-chars", type=int, default=6000)
@@ -880,6 +1246,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnosed.add_argument("--render", action="store_true", help="Compare saved source/intermediate/candidate windows without reimporting")
     stat = sub.add_parser("status"); stat.add_argument("--job", type=Path, required=True); args = parser.parse_args(argv)
     if args.command == "doctor": output, code = doctor(args.source, args.autocad_root), 0
+    elif args.command == "host-compat": output, code = host_compat_report(), 0
     elif args.command == "export": code = run_export(args.source, args.job, args.source_language, args.target_language, args.autocad_root, args.timeout_seconds, args.output_mode, args.retry_from); output = {"job": str(absolute(args.job)), "exitCode": code}
     elif args.command == "prepare-translations": output, code = prepare_translation_worklist(args.job, args.max_source_chars, args.existing_inline_handles), 0
     elif args.command == "assemble-translations": output, code = assemble_translations(args.job, args.translated), 0

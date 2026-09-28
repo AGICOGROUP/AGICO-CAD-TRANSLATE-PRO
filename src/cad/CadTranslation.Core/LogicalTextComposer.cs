@@ -18,7 +18,7 @@ public static class BilingualNarrativePolicy
     public static BilingualNarrativeSelection Select(
         IReadOnlyList<BilingualNarrativeSample> samples)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
 
         BilingualNarrativeSample[] chineseNarrative = samples
             .Where(sample => CountCjk(sample.Text) >= 6 && VisibleLength(sample.Text) >= 10)
@@ -65,7 +65,7 @@ public static class LogicalCompositionPlacementPolicy
         IReadOnlyList<Rect2> currentBounds,
         int expectedCount)
     {
-        ArgumentNullException.ThrowIfNull(currentBounds);
+        ThrowIfNull(currentBounds);
         if (expectedCount <= 0 || currentBounds.Count != expectedCount)
         {
             return sourceEnvelope;
@@ -97,7 +97,7 @@ public static partial class LogicalTextComposer
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(fragments);
+        ThrowIfNull(fragments);
         if (fragments.Count == 0)
         {
             return [];
@@ -211,6 +211,14 @@ public static partial class LogicalTextComposer
         value.StartsWith("<<", StringComparison.Ordinal) ||
         value.StartsWith(">>", StringComparison.Ordinal);
 
-    [GeneratedRegex("^[12][0-9]{3}$", RegexOptions.CultureInvariant)]
+    private const string FourDigitYearText = "^[12][0-9]{3}$";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(FourDigitYearText, RegexOptions.CultureInvariant)]
     private static partial Regex FourDigitYear();
+#else
+    private static readonly Regex FourDigitYearValue = new Regex(FourDigitYearText, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static Regex FourDigitYear() => FourDigitYearValue;
+#endif
 }

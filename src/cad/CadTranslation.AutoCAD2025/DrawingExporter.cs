@@ -19,8 +19,26 @@ internal static class DrawingExporter
 
     internal static int Export(JobContext context)
     {
+        Progress("export-start");
         context.VerifySourceAndWorkingHashes();
+        Progress("hashes-ok");
         return Write(context, HostApplicationServices.WorkingDatabase);
+    }
+
+    // Opt-in phase probe: silent unless CAD_TRANSLATE_PROGRESS_LOG is set. Used to
+    // localise pathological walks on proxy-heavy drawings without a profiler.
+    internal static void Progress(string message)
+    {
+        string? path = Environment.GetEnvironmentVariable("CAD_TRANSLATE_PROGRESS_LOG");
+        if (string.IsNullOrEmpty(path)) return;
+        try
+        {
+            System.IO.File.AppendAllText(path,
+                DateTime.Now.ToString("HH:mm:ss.fff") + " " + message + Environment.NewLine);
+        }
+        catch (System.IO.IOException)
+        {
+        }
     }
 
     internal static int Write(JobContext context, Database database)
@@ -29,8 +47,15 @@ internal static class DrawingExporter
         var unsupported = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var unusedBlocks = new SortedDictionary<string, int>(StringComparer.Ordinal);
         int invisibleAttributeTemplates = 0;
+        int walked = 0;
+        Progress("write-start mode=" + context.Config.OutputMode);
         using (Transaction transaction = database.TransactionManager.StartTransaction())
         {
+            // Bulk walks over drawings with many entities otherwise hit the undo
+            // record segment flush (observed as a hard stall near 50k opened
+            // objects on a 121k-entity sheet); export is read-only, so undo
+            // recording buys nothing here.
+            database.DisableUndoRecording(true);
             // Bilingual additions apply to placed drawing content. Dormant block
             // library definitions are retained in the DWG without translation.
             string[]? activePrefixes = null;
@@ -39,6 +64,10 @@ internal static class DrawingExporter
                     .Select(i => $"ROOT/BLOCK/{i.DefinitionId}/").Distinct().ToArray();
             foreach (WalkItem item in EntityWalker.Walk(database, transaction))
             {
+                walked++;
+                if (walked % 2000 == 0)
+                    Progress("walk " + walked + " " + item.Value.GetType().Name + " " + item.OwnerPath);
+                if (walked >= 46000) Progress("body-before " + walked + " " + item.Handle);
                 if (activePrefixes is not null && !activePrefixes.Any(p => item.OwnerPath.StartsWith(p, StringComparison.Ordinal)))
                 {
                     unusedBlocks[item.OwnerPath] = unusedBlocks.GetValueOrDefault(item.OwnerPath) + 1;
@@ -58,6 +87,7 @@ internal static class DrawingExporter
                 if (activePrefixes is not null && item.Value is AttributeReference reference && reference.Invisible)
                     continue;
                 ITextAdapter? adapter = Adapters.FirstOrDefault(candidate => candidate.CanHandle(item.Value));
+                if (walked >= 46000) Progress("adapter " + walked + " " + (adapter is null ? "null" : adapter.GetType().Name));
                 if (adapter is null)
                 {
                     string className = item.Value.GetRXClass().Name;
@@ -66,8 +96,11 @@ internal static class DrawingExporter
                     continue;
                 }
                 var adapterContext = new AdapterContext(database, transaction, context.Config.SourceSha256, item.OwnerPath);
+                if (walked >= 46000) Progress("read-before " + walked + " " + item.Handle);
                 foreach (TextSlot slot in adapter.Read(item.Value, adapterContext)) records.Add(ToRecord(item, slot, context.Config.SourceSha256));
+                if (walked >= 46000) Progress("read-after " + walked + " " + item.Handle);
             }
+            Progress("walk-done walked=" + walked + " records=" + records.Count);
             if (activePrefixes is not null && context.Config.SourceLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase) &&
                 (context.Config.TargetLanguage.StartsWith("en", StringComparison.OrdinalIgnoreCase) ||
                  context.Config.TargetLanguage.StartsWith("fr", StringComparison.OrdinalIgnoreCase)) &&
@@ -83,11 +116,13 @@ internal static class DrawingExporter
             }
             transaction.Commit();
         }
+        Progress("commit-done records=" + records.Count);
         var ordered = records.OrderBy(record => record.OwnerPath, StringComparer.Ordinal).ThenBy(record => ParseHandle(record.Handle)).ThenBy(record => record.ObjectType, StringComparer.Ordinal).ThenBy(record => record.Slot, StringComparer.Ordinal).ToArray();
         if (ordered.Length == 0) throw new CommandProtocolException("empty_manifest", "Export found no supported translatable text records.");
         if (ordered.Select(record => record.RecordId).Distinct(StringComparer.Ordinal).Count() != ordered.Length) throw new CommandProtocolException("duplicate_record_id", "Export produced duplicate record IDs.");
         string jsonl = string.Concat(ordered.Select(record => JsonSerializer.Serialize(record, JsonDefaults.Options) + "\n"));
         AtomicFile.WriteUtf8(context.Config.ManifestPath, jsonl);
+        Progress("manifest-written records=" + ordered.Length);
         if (string.Equals(context.Config.OutputMode, "bilingual", StringComparison.OrdinalIgnoreCase))
             NativeDrawing.Report(context, "bilingual-scope.json", new { scope = "model-and-all-layout-reachable-blocks",
                 activeRecordCount = ordered.Length, preservedUnusedBlocks = unusedBlocks,

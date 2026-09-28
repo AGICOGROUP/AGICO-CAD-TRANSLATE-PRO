@@ -29,6 +29,7 @@ internal static class LayoutAuditor
             .ToDictionary(adjustment => adjustment.OldHandle, adjustment => adjustment.NewHandle, StringComparer.OrdinalIgnoreCase);
 
         using Transaction transaction = candidate.TransactionManager.StartTransaction();
+        candidate.DisableUndoRecording(true);
         var candidateTexts = new List<CandidateText>();
         foreach (CadLayoutText source in baseline.Definitions.SelectMany(definition => definition.Texts))
         {
@@ -92,7 +93,8 @@ internal static class LayoutAuditor
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
         string[] missingPaths = LayoutInstanceCoverage.Missing(expectedPaths, auditedPaths);
-        IReadOnlyDictionary<string, int> counts = Enum.GetNames<LayoutRiskLevel>()
+        // Enum.GetNames<T>() is .NET 5+; the non-generic overload plus Cast works on every target.
+        IReadOnlyDictionary<string, int> counts = Enum.GetNames(typeof(LayoutRiskLevel)).Cast<string>()
             .ToDictionary(
                 name => name.ToLowerInvariant(),
                 name => risks.Count(risk => string.Equals(risk.Level, name, StringComparison.OrdinalIgnoreCase)),
@@ -120,7 +122,8 @@ internal static class LayoutAuditor
         IReadOnlyList<CandidateText> texts,
         ICollection<LayoutAuditRiskRow> risks)
     {
-        foreach (CandidateText text in texts.Where(text => text.Baseline.Region is not null))
+        foreach (CandidateText text in texts.Where(text =>
+                     text.Baseline.Region is not null && !IsMergedFragment(text)))
         {
             LayoutRegion region = text.Baseline.Region!;
             BlockInstancePath[] instances = baseline.BlockInstances
@@ -211,6 +214,13 @@ internal static class LayoutAuditor
         {
             CandidateText left = byRecordId[pair.LeftRecordId];
             CandidateText right = byRecordId[pair.RightRecordId];
+            // Merged fragments share the survivor's geometry; the survivor is
+            // audited on its own and the members have no placement of their own.
+            if (IsMergedFragment(left) || IsMergedFragment(right))
+            {
+                continue;
+            }
+
             if (!LayoutTextOverlapPolicy.ShouldReport(
                     left.Baseline.CandidateText,
                     right.Baseline.CandidateText,
@@ -255,7 +265,8 @@ internal static class LayoutAuditor
         foreach (CadDefinitionTopology definition in baseline.Definitions)
         {
             CandidateText[] definitionTexts = texts
-                .Where(text => string.Equals(text.Baseline.DefinitionName, definition.Name, StringComparison.Ordinal))
+                .Where(text => string.Equals(text.Baseline.DefinitionName, definition.Name, StringComparison.Ordinal) &&
+                               !IsMergedFragment(text))
                 .ToArray();
             foreach (CandidateText text in definitionTexts)
             {
@@ -296,6 +307,9 @@ internal static class LayoutAuditor
             }
         }
     }
+
+    private static bool IsMergedFragment(CandidateText text) =>
+        text.Actions.Contains("fragment-merge", StringComparer.Ordinal);
 
     private static Entity ResolveEntity(
         Database database,

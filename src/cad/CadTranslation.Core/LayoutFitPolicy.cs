@@ -32,6 +32,14 @@ public static class LayoutFitPolicy
     public const double MinimumWidthScale = 0.70;
     public const double MinimumHeightScale = 0.55;
     public const double EmergencyMinimumHeightScale = 0.25;
+    /// <summary>
+    /// A wrapped label may grow at most this much beyond its source footprint height.
+    /// Text wrapped into the slot can otherwise balloon several times taller than the
+    /// original line and cover a neighbouring table or frame, because text that lives
+    /// inside a block reference is not part of the placed occupancy set that the
+    /// collision checks see.
+    /// </summary>
+    public const double MaximumWrappedHeightGrowth = 2.0;
     private const double Tolerance = 1.001;
 
     public static LayoutFitDecision Decide(LayoutFitRequest request)
@@ -51,14 +59,14 @@ public static class LayoutFitPolicy
             actions.Add(LayoutAction.Wrap);
         }
 
-        double widthScale = Math.Clamp(request.SourceWidth / width, MinimumWidthScale, 1.0);
+        double widthScale = Clamp(request.SourceWidth / width, MinimumWidthScale, 1.0);
         if (widthScale < 1.0)
         {
             width *= widthScale;
             actions.Add(LayoutAction.CompressWidth);
         }
 
-        double heightScale = Math.Clamp(
+        double heightScale = Clamp(
             Math.Min(request.SourceWidth / width, request.SourceHeight / height),
             MinimumHeightScale,
             1.0);
@@ -85,7 +93,7 @@ public static class LayoutFitPolicy
             throw new ArgumentOutOfRangeException(nameof(requestedScale));
         }
 
-        return Math.Clamp(requestedScale, EmergencyMinimumHeightScale, 1.0);
+        return Clamp(requestedScale, EmergencyMinimumHeightScale, 1.0);
     }
 
     public static double ClampReadableHeightScale(double requestedScale)
@@ -95,7 +103,7 @@ public static class LayoutFitPolicy
             throw new ArgumentOutOfRangeException(nameof(requestedScale));
         }
 
-        return Math.Clamp(requestedScale, MinimumHeightScale, 1.0);
+        return Clamp(requestedScale, MinimumHeightScale, 1.0);
     }
 
     public static bool NeedsContainmentRetry(
@@ -123,7 +131,7 @@ public static class LayoutFitPolicy
             return 1;
         }
 
-        return Math.Clamp(
+        return Clamp(
             required * 0.90,
             EmergencyMinimumHeightScale,
             1);
@@ -148,7 +156,7 @@ public static class BilingualPlacementPolicy
 
     public static Rect2 PlaceAtCellBottom(Rect2 cell, double width, double height, double margin)
     {
-        double left = Math.Clamp(cell.Center.X - width / 2, cell.Left + margin, cell.Right - margin - width);
+        double left = Clamp(cell.Center.X - width / 2, cell.Left + margin, cell.Right - margin - width);
         return new Rect2(left, cell.Bottom + margin, left + width, cell.Bottom + margin + height);
     }
 
@@ -178,10 +186,10 @@ public static class BilingualPlacementPolicy
         double[] ys = { source.Bottom - margin - height, source.Top + margin,
             allowed.Bottom + margin, allowed.Center.Y - height / 2, allowed.Top - margin - height };
         return xs.SelectMany(x => ys.Select(y => new Rect2(
-                Math.Clamp(x, allowed.Left + margin, allowed.Right - margin - width),
-                Math.Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height),
-                Math.Clamp(x, allowed.Left + margin, allowed.Right - margin - width) + width,
-                Math.Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height) + height)))
+                Clamp(x, allowed.Left + margin, allowed.Right - margin - width),
+                Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height),
+                Clamp(x, allowed.Left + margin, allowed.Right - margin - width) + width,
+                Clamp(y, allowed.Bottom + margin, allowed.Top - margin - height) + height)))
             .Distinct()
             .OrderBy(r => Math.Pow(r.Center.X - source.Center.X, 2) + Math.Pow(r.Center.Y - source.Center.Y, 2))
             .ToArray();
@@ -211,7 +219,7 @@ public static partial class NarrativeTextClassifier
 {
     public static bool IsConvertibleDbText(LayoutTextProfile profile)
     {
-        ArgumentNullException.ThrowIfNull(profile);
+        ThrowIfNull(profile);
         if (!string.Equals(profile.ObjectType, "AcDbText", StringComparison.Ordinal) ||
             !string.Equals(profile.HorizontalMode, "TextLeft", StringComparison.Ordinal))
             return false;
@@ -221,22 +229,37 @@ public static partial class NarrativeTextClassifier
         return wordCount >= 6;
     }
 
-    [GeneratedRegex(@"[A-Za-z]+(?:[-'][A-Za-z]+)*")]
-    private static partial Regex WordPattern();
+    private const string WordPatternText = @"[A-Za-z]+(?:[-'][A-Za-z]+)*";
 
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(WordPatternText)]
+    private static partial Regex WordPattern();
+#else
+    private static readonly Regex WordPatternValue = new Regex(WordPatternText, RegexOptions.Compiled);
+
+    private static Regex WordPattern() => WordPatternValue;
+#endif
 }
 
 public static partial class FixedLabelTextClassifier
 {
     public static bool ShouldWrap(LayoutTextProfile profile)
     {
-        ArgumentNullException.ThrowIfNull(profile);
+        ThrowIfNull(profile);
         return string.Equals(profile.ObjectType, "AcDbText", StringComparison.Ordinal) &&
                WordPattern().Matches(profile.Text?.Trim() ?? string.Empty).Count >= 6;
     }
 
-    [GeneratedRegex(@"[A-Za-z]+(?:[-'][A-Za-z]+)*")]
+    private const string WordPatternText = @"[A-Za-z]+(?:[-'][A-Za-z]+)*";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(WordPatternText)]
     private static partial Regex WordPattern();
+#else
+    private static readonly Regex WordPatternValue = new Regex(WordPatternText, RegexOptions.Compiled);
+
+    private static Regex WordPattern() => WordPatternValue;
+#endif
 }
 
 public static class LayoutTextMetrics

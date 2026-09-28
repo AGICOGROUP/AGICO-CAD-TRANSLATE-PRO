@@ -5,7 +5,7 @@ public static class LogicalTextSegmenter
     public static LogicalComposedRow[][] SplitAtSourceGaps(
         IReadOnlyList<LogicalComposedRow> rows)
     {
-        ArgumentNullException.ThrowIfNull(rows);
+        ThrowIfNull(rows);
         var segments = new List<List<LogicalComposedRow>>();
         foreach (LogicalComposedRow row in rows)
         {

@@ -85,7 +85,7 @@ internal static class BilingualPlacementChecks
             trace?.Reject(rule, b, text, obstacle, handle, boundary) ?? false;
         bool Check(Rect2 b)
         {
-            if (!double.IsFinite(b.Area) || b.Width <= 0 || b.Height <= 0) return Reject("invalid-bounds", b);
+            if (!IsFinite(b.Area) || b.Width <= 0 || b.Height <= 0) return Reject("invalid-bounds", b);
             if (!allowed.Contains(b, 1e-6)) return Reject("outside-region", b, allowed);
             foreach (Rect2 o in occupied)
                 if (BilingualDrawingImporter.Intersects(b, o, padding)) return Reject("text-overlap", b, o);

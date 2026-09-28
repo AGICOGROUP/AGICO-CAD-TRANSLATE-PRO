@@ -18,9 +18,26 @@ def review(source, target):
     return issues
 
 
-def layout_review(adjustments, minimum_ratio=0.65):
-    """Identify readability risk even when collision checks pass."""
-    rows = []
+def _box_size(bounds):
+    if not isinstance(bounds, dict):
+        return None, None
+    try:
+        return (bounds["maxX"] - bounds["minX"], bounds["maxY"] - bounds["minY"])
+    except (KeyError, TypeError):
+        return None, None
+
+
+def layout_review(adjustments, minimum_ratio=0.65, maximum_growth_ratio=1.5, severe_growth_ratio=2.0):
+    """Identify layout risk even when collision checks pass.
+
+    Two opposite failure modes matter. Text shrunk below the original height is
+    hard to read; text whose box grew taller because a longer translation was
+    wrapped into several lines invades the space above or below it and can sit on
+    top of a table whose own text was not part of the occupancy set. A wider box
+    is reported separately: target text is normally longer than the source, so the
+    width signal is informational and only the height signal gates delivery.
+    """
+    rows, grown, severe, wider = [], [], [], []
     for item in adjustments.get("adjustments", []):
         before, after = item.get("originalHeight"), item.get("newHeight")
         if isinstance(before, (float, int)) and isinstance(after, (float, int)) and before > 0:
@@ -28,6 +45,33 @@ def layout_review(adjustments, minimum_ratio=0.65):
             if ratio < minimum_ratio:
                 rows.append({"recordId": item.get("recordId"), "handle": item.get("newHandle"),
                     "heightRatio": round(ratio, 4), "originalHeight": before, "newHeight": after})
-    return {"status": "review-needed" if rows else "no-severe-height-reduction",
-            "thresholdRatio": minimum_ratio, "count": len(rows), "records": rows,
-            "note": "Inspect final placed instances at readable scale; fitting success alone does not imply legibility."}
+        source_width, source_height = _box_size(item.get("sourceBounds"))
+        candidate_width, candidate_height = _box_size(item.get("candidateBounds"))
+        if not source_width or not source_height or candidate_width is None or candidate_height is None:
+            continue
+        height_growth = candidate_height / source_height
+        width_growth = candidate_width / source_width
+        entry = {"recordId": item.get("recordId"), "handle": item.get("newHandle"),
+            "heightGrowthRatio": round(height_growth, 4), "widthGrowthRatio": round(width_growth, 4),
+            "sourceBox": {"width": round(source_width, 2), "height": round(source_height, 2)},
+            "candidateBox": {"width": round(candidate_width, 2), "height": round(candidate_height, 2)},
+            "actions": item.get("actions", []), "reason": item.get("reason")}
+        if height_growth >= maximum_growth_ratio:
+            grown.append(entry)
+            if height_growth >= severe_growth_ratio:
+                severe.append(entry)
+        elif width_growth >= maximum_growth_ratio:
+            wider.append(entry)
+    return {"status": "review-needed" if rows or grown else "no-layout-risk",
+            "thresholdRatio": minimum_ratio, "growthThresholdRatio": maximum_growth_ratio,
+            "severeGrowthThresholdRatio": severe_growth_ratio,
+            "count": len(rows), "records": rows,
+            "growthCount": len(grown), "growthRecords": grown,
+            "severeGrowthCount": len(severe), "severeGrowthRecords": severe,
+            "widthGrowthCount": len(wider), "widthGrowthRecords": wider,
+            "recordIds": sorted({row.get("recordId") for row in rows + grown if row.get("recordId")}),
+            "severeRecordIds": sorted({row.get("recordId") for row in severe if row.get("recordId")}),
+            "note": "Inspect final placed instances at readable scale; fitting success alone does not imply legibility. "
+                    "growthRecords lists labels whose box grew taller than the source footprint because a longer target "
+                    "was wrapped, so they can cover a neighbouring table or frame even though the fit test passed. "
+                    "widthGrowthRecords is informational: target text is normally longer horizontally."}

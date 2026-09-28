@@ -7,7 +7,7 @@ public static class AuthoritativeNarrativeSelector
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
         IReadOnlyDictionary<string, FragmentedNarrativeSample> byId = samples
             .ToDictionary(sample => sample.Id, StringComparer.Ordinal);
         NarrativeRowItem[][] panels = NarrativeHorizontalPanelPartitioner.Partition(
@@ -26,7 +26,7 @@ public static class AuthoritativeNarrativeSelector
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
         return NarrativeOccupancyDetector.DetectGroups(
             samples
                 .Where(sample => sample.IsEligible && IsNarrativeCandidate(sample.SourceText))

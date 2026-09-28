@@ -1,7 +1,7 @@
 from pathlib import Path
 import re
 from pipeline_io import read_jsonl, write_report, read_report, digest, launch_import, publish_candidate
-from translation_work import direction, needs_translation, visible, HAN, LATIN
+from translation_work import direction, needs_translation, visible, numeric_rendering, HAN, LATIN
 
 class BilingualPipeline:
     mode = "bilingual"
@@ -22,11 +22,13 @@ class BilingualPipeline:
             if needs_translation(source, source_lang):
                 requested += 1
                 target = visible(row["translatedText"])
+                source_visible = visible(source.get("plainText", ""))
+                numeric = target_lang != "zh" and numeric_rendering(source_visible, target)
                 # V2 exchange contains ONLY the added translation; source preservation is native.
-                if not (HAN if target_lang == "zh" else LATIN).search(target):
+                if not numeric and not (HAN if target_lang == "zh" else LATIN).search(target):
                     invalid.append(row["recordId"])
                 if target_lang != "zh" and HAN.search(target): invalid.append(row["recordId"])
-                if target_lang != "zh" and not re.search(r"(?<!\w)[A-Za-zÀ-ÖØ-öø-ÿ]{2,}(?!\w)", target): invalid.append(row["recordId"])
+                if not numeric and target_lang != "zh" and not re.search(r"(?<!\w)[A-Za-zÀ-ÖØ-öø-ÿ]{2,}(?!\w)", target): invalid.append(row["recordId"])
             if "\ufffd" in row["translatedText"] or (source.get("plainText") and not row["translatedText"].strip()):
                 invalid.append(row["recordId"])
         invalid = sorted(set(invalid))

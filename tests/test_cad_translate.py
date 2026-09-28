@@ -225,7 +225,7 @@ class CadTranslateDryTests(unittest.TestCase):
     def test_packaged_plugin_is_present_and_matches_release_build_when_available(self):
         skill_root = Path(__file__).resolve().parents[1]
         source_root = skill_root / "src" / "cad"
-        autocad_root = Path(r"C:\Program Files\Autodesk\AutoCAD 2025")
+        autocad_root = cad_translate.discover_autocad()
         framework = "net8.0-windows"
         self.assertTrue((source_root / "CadTranslation.AutoCAD2025" / "Importer.cs").is_file())
         self.assertTrue((source_root / "CadTranslation.Core" / "TranslationValidator.cs").is_file())
@@ -971,6 +971,271 @@ class CadTranslateDryTests(unittest.TestCase):
             )
 
 
+
+
+class HostCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def fake_winreg(nodes):
+        """nodes: {hive label: {registry path: {"subkeys": [...], "values": {...}}}}"""
+        hives = {"HKEY_LOCAL_MACHINE": object(), "HKEY_CURRENT_USER": object()}
+        labels = {id(value): label for label, value in hives.items()}
+
+        class Key:
+            def __init__(self, node, path): self.node, self.path = node, path
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+
+        def open_key(hive, path):
+            node = nodes.get(labels[id(hive)], {}).get(path)
+            if node is None: raise OSError(path)
+            return Key(node, path)
+
+        def enum_value(key, index):
+            name = list(key.node.get("values", {}))[index]
+            return name, key.node["values"][name], 1
+
+        return types.SimpleNamespace(
+            HKEY_LOCAL_MACHINE=hives["HKEY_LOCAL_MACHINE"],
+            HKEY_CURRENT_USER=hives["HKEY_CURRENT_USER"],
+            OpenKey=open_key,
+            QueryInfoKey=lambda key: (len(key.node.get("subkeys", [])), len(key.node.get("values", {})), 0),
+            EnumKey=lambda key, index: key.node["subkeys"][index],
+            EnumValue=enum_value,
+            QueryValueEx=lambda key, name: (key.node["values"][name], 1),
+        )
+
+    @staticmethod
+    def installed_tree(root, releases):
+        """releases: [(registry release, product key, install root, Release value)]"""
+        nodes = {r"SOFTWARE\Autodesk\AutoCAD": {"subkeys": [item[0] for item in releases] + ["InstalledProducts"], "values": {}}}
+        for release, product, location, release_value in releases:
+            nodes[rf"SOFTWARE\Autodesk\AutoCAD\{release}"] = {"subkeys": [product], "values": {}}
+            nodes[rf"SOFTWARE\Autodesk\AutoCAD\{release}\{product}"] = {
+                "subkeys": [], "values": {"AcadLocation": str(location), "Release": release_value},
+            }
+        return {"HKEY_LOCAL_MACHINE": nodes}
+
+    def test_host_support_classifies_every_release_tier(self):
+        self.assertEqual("supported", cad_translate.host_support(2025, True)[0])
+        self.assertEqual("build-required", cad_translate.host_support(2027, True)[0])
+        tier, reasons = cad_translate.host_support(2024, True)
+        self.assertEqual("port-required", tier)
+        self.assertIn(".NET Framework 4.8", reasons[-1])
+        self.assertEqual(".NET Framework 4.7", cad_translate.host_runtime(2020))
+        out_of_window, window_reasons = cad_translate.host_support(2018, True)
+        self.assertEqual("out-of-window", out_of_window)
+        self.assertIn("support window", window_reasons[-1])
+        self.assertEqual("unsupported", cad_translate.host_support(2012, False)[0])
+        self.assertEqual("unsupported", cad_translate.host_support(2002, False)[0])
+        self.assertEqual("unknown", cad_translate.host_support(None, True)[0])
+
+    def test_autocad_release_error_names_the_runtime_the_host_needs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package_root = Path(directory) / "plugin"
+            self.write_package(package_root)  # flat 2025 package only, no per-release folders
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root):
+                with self.assertRaisesRegex(ValueError, r"AutoCAD 2021.*\.NET Framework 4\.8"):
+                    cad_translate.autocad_release(Path(r"D:\AutoCAD 2021"))
+
+    def test_packaged_release_reports_acceptance_evidence_separately(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package_root = Path(directory) / "plugin"
+            release_dir = package_root / "R24.3"
+            self.write_package(release_dir)
+            host = Path(r"D:\AutoCAD 2024")
+            marker = release_dir / cad_translate.ACCEPTANCE_MARKER
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root):
+                unaccepted = cad_translate.host_compatibility(host)
+                # A marker only counts when it records the hashes of the artefacts present now.
+                marker.write_text(json.dumps({"job": "release-regression", "pluginDllSha256": "stale"}),
+                                  encoding="utf-8")
+                stale = cad_translate.host_compatibility(host)
+                marker.write_text(json.dumps({
+                    "job": "release-regression",
+                    "pluginDllSha256": cad_translate.sha256(release_dir / cad_translate.PLUGIN_FILES[0]),
+                    "coreDllSha256": cad_translate.sha256(release_dir / cad_translate.PLUGIN_FILES[1]),
+                }), encoding="utf-8")
+                accepted = cad_translate.host_compatibility(host)
+            self.assertTrue(unaccepted["packagedPluginAvailable"])
+            self.assertFalse(unaccepted["packagedPluginAccepted"])
+            self.assertEqual("supported", unaccepted["support"])
+            self.assertIn("compile-verified only", unaccepted["warnings"][0])
+            self.assertFalse(stale["packagedPluginAccepted"])
+            self.assertTrue(accepted["packagedPluginAccepted"])
+            self.assertEqual([], accepted["warnings"])
+
+    def test_registry_hosts_maps_every_installed_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy, current = root / "AutoCAD 2020", root / "AutoCAD 2025"
+            legacy.mkdir(); current.mkdir()
+            fake = self.fake_winreg(self.installed_tree(root, [
+                ("R23.1", "ACAD-3101:409", legacy, "23.1.88.0"),
+                ("R25.0", "ACAD-8101:804", current, "25.0.58.0"),
+            ]))
+            with mock.patch.dict("sys.modules", {"winreg": fake}):
+                hosts = {host["year"]: host for host in cad_translate.registry_hosts()}
+            self.assertEqual({2020, 2025}, set(hosts))
+            self.assertEqual(str(legacy), hosts[2020]["root"])
+            self.assertEqual("R25.0", hosts[2025]["release"])
+            self.assertFalse(hosts[2020]["coreConsoleExists"])
+
+    def test_discovery_prefers_a_host_the_packaged_plugin_can_load_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy, current = root / "AutoCAD 2024", root / "AutoCAD 2025"
+            for host in (legacy, current):
+                host.mkdir(); (host / "accoreconsole.exe").write_bytes(b"host")
+            fake = self.fake_winreg(self.installed_tree(root, [
+                ("R24.3", "ACAD-7101:804", legacy, "24.3.11.0"),
+                ("R25.0", "ACAD-8101:804", current, "25.0.58.0"),
+            ]))
+            with mock.patch.dict("sys.modules", {"winreg": fake}), \
+                    mock.patch.dict(cad_translate.os.environ, {"CAD_TRANSLATE_AUTOCAD_ROOT": ""}), \
+                    mock.patch.object(cad_translate, "AUTOCAD_2025", root / "absent-default"):
+                chosen = cad_translate.discover_autocad()
+            self.assertEqual(current.resolve(), chosen.resolve())
+
+    def test_discovery_falls_back_to_newest_console_host_and_reports_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy = root / "AutoCAD 2018"
+            legacy.mkdir(); (legacy / "accoreconsole.exe").write_bytes(b"host")
+            fake = self.fake_winreg(self.installed_tree(root, [("R22.0", "ACAD-2101:409", legacy, "22.0.55.0")]))
+            with mock.patch.dict("sys.modules", {"winreg": fake}), \
+                    mock.patch.dict(cad_translate.os.environ, {"CAD_TRANSLATE_AUTOCAD_ROOT": ""}), \
+                    mock.patch.object(cad_translate, "AUTOCAD_2025", root / "absent-default"):
+                report = cad_translate.host_compat_report()
+            self.assertEqual("blocked", report["status"])
+            self.assertEqual(2018, report["selectedHost"]["year"])
+            self.assertEqual("out-of-window", report["selectedHost"]["support"])
+            self.assertIn("support window", report["selectedHost"]["buildHint"]["blocker"])
+            self.assertIn(2025, report["packagedPluginYears"])
+            self.assertIn(2024, report["packagedPluginYears"])
+
+    def test_doctor_names_the_version_blocker_instead_of_a_missing_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "AutoCAD 2018"
+            root.mkdir(); (root / "accoreconsole.exe").write_bytes(b"host")
+            report = cad_translate.doctor(autocad_root=root)
+            self.assertEqual("blocked", report["status"])
+            self.assertEqual("out-of-window", report["hostCompatibility"]["support"])
+            self.assertEqual(2018, report["hostCompatibility"]["year"])
+            self.assertIn("support window", " ".join(report["blockers"]))
+            self.assertFalse(report["profile"]["writable"])
+
+    def test_doctor_reports_a_packaged_legacy_host_as_ready_with_an_acceptance_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "AutoCAD 2024"
+            root.mkdir(); (root / "accoreconsole.exe").write_bytes(b"host")
+            report = cad_translate.doctor(autocad_root=root)
+            self.assertEqual("supported", report["hostCompatibility"]["support"])
+            self.assertTrue(report["hostCompatibility"]["packagedPluginAvailable"])
+            self.assertFalse(report["hostCompatibility"]["packagedPluginAccepted"])
+            self.assertIn("compile-verified only", " ".join(report["warnings"]))
+            # Blocked only by the missing host on this machine, never by the package itself.
+            self.assertTrue(any("accoreconsole" in item or "profile" in item for item in report["blockers"]))
+
+    @staticmethod
+    def write_package(directory, names=None):
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in names or cad_translate.PLUGIN_FILES:
+            (directory / name).write_bytes(b"build-" + name.encode())
+
+    def test_per_release_package_makes_that_host_supported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package_root = Path(directory) / "plugin"
+            self.write_package(package_root / "R24.3")
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root):
+                self.assertIn(2024, cad_translate.shipped_plugin_years())
+                self.assertEqual("R24.3", cad_translate.autocad_release(Path(r"D:\AutoCAD 2024")))
+                compatibility = cad_translate.host_compatibility(Path(r"D:\AutoCAD 2024"))
+                deployed = cad_translate.runtime_plugin_dir(Path(r"D:\AutoCAD 2024"))
+            self.assertEqual("supported", compatibility["support"])
+            self.assertTrue(compatibility["packagedPluginAvailable"])
+            self.assertIsNone(compatibility["buildHint"])
+            self.assertEqual(
+                Path(r"C:\Program Files\Autodesk\ApplicationPlugins\CadTranslation2024.bundle\Contents\Windows"),
+                deployed.parent,
+            )
+            self.assertTrue(deployed.name.startswith("package-"))
+
+    def test_a_missing_per_release_package_never_falls_back_to_the_2025_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package_root = Path(directory) / "plugin"
+            self.write_package(package_root)
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root):
+                self.assertNotIn(2024, cad_translate.shipped_plugin_years())
+                self.assertEqual(package_root / "R24.3", cad_translate.packaged_plugin_dir("R24.3"))
+                with self.assertRaisesRegex(ValueError, r"AutoCAD 2024.*port-required"):
+                    cad_translate.autocad_release(Path(r"D:\AutoCAD 2024"))
+                with self.assertRaisesRegex(ValueError, r"CadHostFramework=net48"):
+                    cad_translate.ensure_runtime_plugin(Path(r"D:\AutoCAD 2024"))
+
+    def test_deployment_copies_the_whole_dependency_closure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_root, bundle_root = root / "plugin", root / "ApplicationPlugins"
+            self.write_package(package_root / "R24.3", names=(*cad_translate.PLUGIN_FILES, "System.Text.Json.dll"))
+            host = root / "AutoCAD 2024"; host.mkdir()
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root), \
+                    mock.patch.object(cad_translate, "APPLICATION_PLUGINS_ROOT", bundle_root), \
+                    mock.patch.object(cad_translate, "AUTOCAD_2025_PLUGIN_DIR", bundle_root / "unused-2025"):
+                deployed = cad_translate.ensure_runtime_plugin(host)
+            self.assertEqual(bundle_root / "CadTranslation2024.bundle" / "Contents" / "Windows", deployed.parent)
+            self.assertTrue(deployed.name.startswith("package-"))
+            for name in (*cad_translate.PLUGIN_FILES, "System.Text.Json.dll"):
+                self.assertTrue((deployed / name).is_file(), name)
+                self.assertEqual(
+                    cad_translate.sha256(package_root / "R24.3" / name),
+                    cad_translate.sha256(deployed / name),
+                )
+
+    def test_standard_user_deploys_to_the_per_user_bundle(self):
+        # Program Files grants BUILTIN\Users only RX; the historical machine-wide deployment would
+        # crash with PermissionError on every standard (non-admin) account.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_root, user_local = root / "plugin", root / "local"
+            self.write_package(package_root / "R24.3")
+            host = root / "AutoCAD 2024"; host.mkdir()
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root), \
+                    mock.patch.dict(cad_translate.os.environ, {"LOCALAPPDATA": str(user_local)}), \
+                    mock.patch.object(cad_translate, "_dir_writable", return_value=False):
+                deployed = cad_translate.ensure_runtime_plugin(host)
+            self.assertEqual(
+                user_local / "Autodesk" / "ApplicationPlugins" / "CadTranslation2024.bundle" / "Contents" / "Windows",
+                deployed.parent,
+            )
+            for name in cad_translate.PLUGIN_FILES:
+                self.assertEqual(
+                    cad_translate.sha256(package_root / "R24.3" / name),
+                    cad_translate.sha256(deployed / name),
+                )
+
+    def test_build_hint_gives_the_exact_command_per_host_year(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package_root = Path(directory) / "plugin"
+            self.write_package(package_root)  # flat 2025 only, so the window years still need a build
+            with mock.patch.object(cad_translate, "PLUGIN_DIR", package_root):
+                hint = cad_translate.build_hint(2024, r"D:\AutoCAD 2024")
+                self.assertTrue(hint["buildable"])
+                self.assertEqual("net48", hint["hostFramework"])
+                self.assertEqual("assets/plugin/R24.3/", hint["packageDir"])
+                self.assertIn("-p:AutoCADRelease=2024 -p:CadHostFramework=net48", hint["command"])
+                self.assertIn(r'-p:AutoCADDir="D:\AutoCAD 2024"', hint["command"])
+                self.assertNotIn("-p:Platform=x64", hint["command"])
+                self.assertEqual("net47", cad_translate.build_hint(2020, None)["hostFramework"])
+                self.assertIn("assets/plugin/R23.1/", cad_translate.build_hint(2020, None)["packageDir"])
+                # Outside the official 2020-2025 window nothing is built, and the reason says so.
+                self.assertIn("support window", cad_translate.build_hint(2016, None)["blocker"])
+                self.assertFalse(cad_translate.build_hint(2016, None)["buildable"])
+                self.assertIn("accoreconsole", cad_translate.build_hint(2010, None)["blocker"])
+                self.assertEqual("net10.0", cad_translate.build_hint(2027, None)["hostFramework"])
+                self.assertIsNone(cad_translate.build_hint(2025, None))
+        # Once a release is packaged, its build hint disappears and the host reports as supported.
+        self.assertIsNone(cad_translate.build_hint(2024, None))
+        self.assertIn(2024, cad_translate.shipped_plugin_years())
 
 
 if __name__ == "__main__":

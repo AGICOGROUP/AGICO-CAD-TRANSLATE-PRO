@@ -13,6 +13,10 @@ internal sealed class DbTextAdapter : ITextAdapter
     public void Write(DBObject value, string slot, string restoredText)
     {
         if (!CanWriteSlot(value, slot)) throw new InvalidOperationException("DBText slot does not match manifest.");
-        ((DBText)value).TextString = restoredText;
+        var text = (DBText)value;
+        text.TextString = restoredText;
+        // Keep the original alignment anchor after the string (and thus its extents)
+        // changes; a no-op for left/base-left text.
+        text.AdjustAlignment(text.Database);
     }
 }

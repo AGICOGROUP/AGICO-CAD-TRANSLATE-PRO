@@ -61,7 +61,7 @@ public static class LayoutV2Planner
         IReadOnlyList<LayoutV2Input> inputs,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(inputs);
+        ThrowIfNull(inputs);
         Validate(inputs);
 
         var allowedById = new Dictionary<string, Rect2>(StringComparer.Ordinal);

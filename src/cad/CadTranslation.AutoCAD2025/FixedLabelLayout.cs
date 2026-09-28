@@ -13,6 +13,14 @@ internal static class FixedLabelLayout
         CadLayoutText topology,
         Rect2 allowedTextBox)
     {
+        // A label keeps its own footprint: the neighbour slot can span a whole sheet, and
+        // fitting into that width both detaches the line from its column and gives the
+        // containment step room to drag it across the drawing.
+        Rect2 bounded = FixedLabelBoxPolicy.Bound(
+            allowedTextBox,
+            topology.Source.Bounds,
+            topology.Source.Anchor,
+            topology.Source.OriginalTextHeight);
         DBObject value = transaction.GetObject(target.ObjectId, OpenMode.ForWrite, false);
         if (value is MText)
         {
@@ -21,7 +29,7 @@ internal static class FixedLabelLayout
                 transaction,
                 target,
                 topology,
-                allowedTextBox,
+                bounded,
                 "fixed-label");
         }
 
@@ -39,7 +47,7 @@ internal static class FixedLabelLayout
                 transaction,
                 target,
                 topology,
-                allowedTextBox,
+                bounded,
                 "fixed-label",
                 force: true);
         }
@@ -53,7 +61,7 @@ internal static class FixedLabelLayout
         double originalHeight = text.Height;
         double originalWidthFactor = text.WidthFactor;
         Rect2 inner = FixedLabelPaddingPolicy.Select(
-            allowedTextBox,
+            bounded,
             topology.Source.Bounds,
             topology.Source.OriginalTextHeight * 0.05);
         Bounds2d allowed = Bounds2d.From(inner);

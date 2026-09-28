@@ -20,7 +20,7 @@ public static class FragmentedNarrativeDetector
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
         double height = Math.Max(medianTextHeight, tolerance);
         FragmentedNarrativeSample[] eligible = samples
             .Where(sample => sample.IsEligible && !string.IsNullOrWhiteSpace(sample.SourceText))

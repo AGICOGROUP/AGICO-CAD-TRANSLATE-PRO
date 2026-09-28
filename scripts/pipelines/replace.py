@@ -1,11 +1,15 @@
 import re
 from pathlib import Path
 from pipeline_io import read_jsonl, write_report, read_report, digest, launch_import, publish_candidate
-from translation_work import direction, needs_translation, visible, HAN, LATIN
+from translation_work import direction, needs_translation, visible, numeric_rendering, HAN, LATIN
 from replacement_quality import review, layout_review
 
 SOURCE_TEXT_RESIDUE = re.compile(r"[\u2e80-\u2fff\u31c0-\u31ef\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f\U00030000-\U000323af]")
 MTEXT_FONT_CODE = re.compile(r"\\[Ff][^;]*;")
+# All-caps Latin tokens (company names, logos, standard codes such as ISO-E) are
+# retained verbatim in Chinese output; requiring Han characters there would reject
+# correct translations.
+CODE_LIKE = re.compile(r"^[A-Z0-9][A-Z0-9 .,&/()+-]*$")
 
 class ReplacePipeline:
     mode = "replace"
@@ -27,8 +31,12 @@ class ReplacePipeline:
                 quality.append({"recordId": row["recordId"], "sourceText": source.get("plainText"),
                     "translatedText": row["translatedText"], "findings": findings})
             if target_lang == "en" and SOURCE_TEXT_RESIDUE.search(target): residual.append(row["recordId"])
-            if target_lang == "en" and HAN.search(visible(source.get("plainText", ""))) and not re.search(r"(?<!\w)[A-Za-z]{2,}(?!\w)", target): invalid.append(row["recordId"])
-            if target_lang == "zh" and needed and not HAN.search(target): invalid.append(row["recordId"])
+            source_visible = visible(source.get("plainText", ""))
+            if (target_lang == "en" and HAN.search(source_visible)
+                    and not re.search(r"(?<!\w)[A-Za-z]{2,}(?!\w)", target)
+                    and not numeric_rendering(source_visible, target)): invalid.append(row["recordId"])
+            if (target_lang == "zh" and needed and not HAN.search(target)
+                    and not CODE_LIKE.match(visible(source.get("plainText", "")).strip())): invalid.append(row["recordId"])
             if (source.get("plainText") and not row["translatedText"].strip()) or "\ufffd" in row["translatedText"]:
                 invalid.append(row["recordId"])
         report = {"schemaVersion": "1.0", "pipeline": "replace-v2", "outputMode": self.mode,
@@ -61,6 +69,7 @@ class ReplacePipeline:
             by_handle = {r.get("handle", r["recordId"]): r for r in records}
             for source in original:
                 if not needs_translation(source, source_lang): continue
+                if CODE_LIKE.match(visible(source.get("plainText", "")).strip()): continue
                 current = by_handle.get(handles.get(source["recordId"]) or source.get("handle", source["recordId"]), {})
                 if not HAN.search(visible(current.get("plainText", ""))): invalid.append(source["recordId"])
         report = {"schemaVersion": "1.0", "pipeline": "replace-v2", "outputMode": self.mode,
@@ -90,7 +99,9 @@ class ReplacePipeline:
         native = read_report(job / "artifacts" / "replace-native-check.json")
         structure = read_report(job / "artifacts" / "replace-structure.json")
         layout = read_report(job / "artifacts" / "replace-layout-audit.json")
-        logical = read_report(job / "artifacts" / "logical-flow-report.json")
+        logical_path = job / "artifacts" / "logical-flow-report.json"
+        # drawings without dense note regions never produce this report
+        logical = read_report(logical_path) if logical_path.is_file() else {}
         if (language_report["status"] != "passed" or native["status"] != "passed" or structure["status"] != "passed"
             or layout.get("missingBlockInstancePaths") or native["candidateSha256"] != digest(staged)):
             raise ValueError("Replacement candidate gate failed; staged drawing retained in artifacts.")
@@ -134,6 +145,19 @@ class ReplacePipeline:
         for name in ("semantic", "readability"):
             detail = job / "artifacts" / f"replace-{name}-review.json"
             quality_counts[name] = read_report(detail).get("count", 0) if detail.is_file() else None
+        # A label that grew past its source footprint can cover a neighbouring table or
+        # frame while every automatic fit test still passes, so the receipt has to name
+        # those records explicitly before the candidate counts as delivery-ready.
+        readability_path = job / "artifacts" / "replace-readability-review.json"
+        readability = read_report(readability_path) if readability_path.is_file() else {}
+        growth_ids = sorted({row.get("recordId") for row in readability.get("severeGrowthRecords", [])
+            if row.get("recordId")})
+        quality_counts["readabilityGrowth"] = readability.get("growthCount")
+        quality_counts["readabilitySevereGrowth"] = readability.get("severeGrowthCount")
+        acknowledged = {value for value in (review.get("reviewedLayoutRecordIds") or [])}
+        unreviewed_growth = [record_id for record_id in growth_ids if record_id not in acknowledged]
+        if unreviewed_growth and review.get("status") in {"passed", "passed_with_warnings"}:
+            errors.append("replace_layout_growth_unreviewed")
         if review.get("status") == "failed" or review.get("blockingIssues"):
             errors.append("replace_visual_blocking_issues")
         ready = not errors and visual_passed
@@ -144,4 +168,6 @@ class ReplacePipeline:
             "deliveryReady": ready, "candidate": str(candidate),
             "deliveryStatus": "ready_with_warnings" if ready and warnings else "ready" if ready else "blocked" if blocked else "needs_review",
             "warnings": warnings if ready else [], "blockingIssues": review.get("blockingIssues", []),
-            "layoutReviewRecordIds": report.get("layoutReviewRecordIds", []), "segmentOverflowCount": report.get("segmentOverflowCount", 0)}
+            "layoutReviewRecordIds": report.get("layoutReviewRecordIds", []),
+            "growthRecordIds": growth_ids, "unreviewedGrowthRecordIds": unreviewed_growth,
+            "segmentOverflowCount": report.get("segmentOverflowCount", 0)}

@@ -85,7 +85,7 @@ internal static class XrefScanner
         {
             return string.Empty;
         }
-        return Path.GetFullPath(Path.IsPathFullyQualified(storedPath)
+        return Path.GetFullPath(IsPathFullyQualified(storedPath)
             ? storedPath
             : Path.Combine(Path.GetDirectoryName(drawingPath) ?? string.Empty, storedPath));
     }
@@ -103,7 +103,13 @@ internal static class XrefScanner
             {
             }
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            return new FileSnapshot(true, Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant());
+#if NETFRAMEWORK
+            // SHA256.HashData(Stream) is .NET 7+; AutoCAD 2020-2024 hosts only have ComputeHash.
+            using var algorithm = SHA256.Create();
+            return new FileSnapshot(true, ToHexString(algorithm.ComputeHash(stream)).ToLowerInvariant());
+#else
+            return new FileSnapshot(true, ToHexString(SHA256.HashData(stream)).ToLowerInvariant());
+#endif
         }
         catch (UnauthorizedAccessException)
         {

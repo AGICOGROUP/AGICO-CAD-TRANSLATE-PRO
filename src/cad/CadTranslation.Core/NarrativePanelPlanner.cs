@@ -8,8 +8,8 @@ public static class NarrativePanelPlanner
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(seedGroups);
-        ArgumentNullException.ThrowIfNull(secondPassGroups);
+        ThrowIfNull(seedGroups);
+        ThrowIfNull(secondPassGroups);
         FragmentedNarrativeGroup[] seeds = seedGroups.ToArray();
         if (!AreDistinctColumns(seeds, medianTextHeight, tolerance))
         {
@@ -37,7 +37,7 @@ public static class NarrativePanelPlanner
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(groups);
+        ThrowIfNull(groups);
         FragmentedNarrativeGroup[] original = groups.ToArray();
         if (original.Length < 3)
         {

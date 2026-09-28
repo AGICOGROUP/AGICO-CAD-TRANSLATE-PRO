@@ -112,7 +112,10 @@ internal static class BilingualTableCopy
                     {
                         var cell = CellOrNull(t);
                         var mate=cell is null ? Array.Empty<CadLayoutText>()
-                            : latinCells.Where(o=>o.RecordId!=t.RecordId && CellOrNull(o)==cell).ToArray();
+                            : latinCells.Where(o=>o.RecordId!=t.RecordId && CellOrNull(o)==cell &&
+                                BilingualLabelEquivalence.MatchesNeighbor(byId[t.RecordId].Manifest.RawText,
+                                    BilingualDrawingImporter.Plain(changed[t.RecordId].RestoredText),
+                                    BilingualDrawingImporter.Plain(byId[o.RecordId].Manifest.RawText))).ToArray();
                         if(mate.Length>0)
                         {
                             pairs.Add(new(t.RecordId,t.EntityHandle,mate[0].EntityHandle,
@@ -392,7 +395,7 @@ internal static class BilingualTableCopy
         using var tx = db.TransactionManager.StartTransaction();
         foreach (var copy in copies)
         {
-            if (copy.Table.Area <= 0 || !double.IsFinite(copy.Table.Area))
+            if (copy.Table.Area <= 0 || !IsFinite(copy.Table.Area))
                 throw new CommandProtocolException("bilingual_table_copy_mismatch", "A copied table requires valid persisted source bounds.");
             Entity Get(string h)
             {

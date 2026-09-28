@@ -28,7 +28,7 @@ internal sealed partial class JobContext
     {
         string configPath = Environment.GetEnvironmentVariable(ConfigEnvironmentVariable)
             ?? throw new CommandProtocolException("missing_config", "CADTRANS_JOB_CONFIG is required.");
-        if (!Path.IsPathFullyQualified(configPath))
+        if (!IsPathFullyQualified(configPath))
         {
             throw new CommandProtocolException("invalid_config_path", "CADTRANS_JOB_CONFIG must be an absolute path.");
         }
@@ -216,7 +216,7 @@ internal sealed partial class JobContext
 
     private static void RequireAbsoluteFilePath(string name, string path, bool mustBeJobOwned, string jobRoot)
     {
-        if (!Path.IsPathFullyQualified(path))
+        if (!IsPathFullyQualified(path))
         {
             throw new CommandProtocolException("invalid_config_path", $"{name} must be an absolute path.");
         }
@@ -234,7 +234,7 @@ internal sealed partial class JobContext
     private static FailureRouting? TryReadFailureRouting()
     {
         string? configPath = Environment.GetEnvironmentVariable(ConfigEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(configPath) || !Path.IsPathFullyQualified(configPath) || !File.Exists(configPath))
+        if (string.IsNullOrWhiteSpace(configPath) || !IsPathFullyQualified(configPath) || !File.Exists(configPath))
         {
             return null;
         }
@@ -252,7 +252,7 @@ internal sealed partial class JobContext
             }
 
             string? resultPath = resultElement.GetString();
-            if (string.IsNullOrWhiteSpace(resultPath) || !Path.IsPathFullyQualified(resultPath) || !IsWithin(jobRoot, resultPath))
+            if (string.IsNullOrWhiteSpace(resultPath) || !IsPathFullyQualified(resultPath) || !IsWithin(jobRoot, resultPath))
             {
                 return null;
             }
@@ -275,7 +275,7 @@ internal sealed partial class JobContext
     private static VerificationFailureRouting? TryReadVerificationFailureRouting()
     {
         string? configPath = Environment.GetEnvironmentVariable(ConfigEnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(configPath) || !Path.IsPathFullyQualified(configPath) || !File.Exists(configPath))
+        if (string.IsNullOrWhiteSpace(configPath) || !IsPathFullyQualified(configPath) || !File.Exists(configPath))
         {
             return null;
         }
@@ -293,7 +293,7 @@ internal sealed partial class JobContext
             }
 
             string? artifactDirectory = artifactElement.GetString();
-            if (string.IsNullOrWhiteSpace(artifactDirectory) || !Path.IsPathFullyQualified(artifactDirectory) || !IsWithin(jobRoot, artifactDirectory))
+            if (string.IsNullOrWhiteSpace(artifactDirectory) || !IsPathFullyQualified(artifactDirectory) || !IsWithin(jobRoot, artifactDirectory))
             {
                 return null;
             }
@@ -309,7 +309,7 @@ internal sealed partial class JobContext
 
     private static bool IsWithin(string root, string candidate)
     {
-        string relative = Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(candidate));
+        string relative = GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(candidate));
         return relative is not ".." && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) && !Path.IsPathRooted(relative);
     }
 
@@ -322,7 +322,7 @@ internal sealed partial class JobContext
             string path = Path.Combine(directory, "command-failure.json");
             var diagnostic = new { operation, error = ToError(exception), routingDetail, finishedAtUtc = DateTimeOffset.UtcNow };
             using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-            using (var writer = new StreamWriter(stream, JsonDefaults.Utf8NoBom, leaveOpen: true))
+            using (var writer = new StreamWriter(stream, JsonDefaults.Utf8NoBom, 1024, leaveOpen: true))
             {
                 writer.Write(JsonSerializer.Serialize(diagnostic, JsonDefaults.Options));
                 writer.Flush();
@@ -345,7 +345,7 @@ internal sealed partial class JobContext
     private static string GetDiagnosticDirectory()
     {
         string? requestedDirectory = Environment.GetEnvironmentVariable(DiagnosticDirectoryEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(requestedDirectory) && Path.IsPathFullyQualified(requestedDirectory))
+        if (!string.IsNullOrWhiteSpace(requestedDirectory) && IsPathFullyQualified(requestedDirectory))
         {
             return Path.Combine(Path.GetFullPath(requestedDirectory), Guid.NewGuid().ToString("N"));
         }
@@ -356,8 +356,16 @@ internal sealed partial class JobContext
     private static string? ReadOptionalString(JsonElement root, string propertyName) =>
         root.TryGetProperty(propertyName, out JsonElement value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    [GeneratedRegex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant)]
+    private const string LowerHexSha256Text = "^[0-9a-f]{64}$";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(LowerHexSha256Text, RegexOptions.CultureInvariant)]
     private static partial Regex LowerHexSha256();
+#else
+    private static readonly Regex LowerHexSha256Value = new Regex(LowerHexSha256Text, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static Regex LowerHexSha256() => LowerHexSha256Value;
+#endif
 
     private sealed record FailureRouting(string ResultPath, string JobId, string SourceSha256);
     private sealed record VerificationFailureRouting(string ArtifactDirectory, string JobId, string SourceSha256);

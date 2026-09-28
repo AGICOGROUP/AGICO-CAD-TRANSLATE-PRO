@@ -16,6 +16,6 @@ public static class MTextWrapWidthPolicy
 
         double minimum = Math.Min(textHeight, allowedWidth);
         double preferred = currentWidth > 0 ? currentWidth : allowedWidth;
-        return Math.Clamp(preferred, minimum, allowedWidth);
+        return Clamp(preferred, minimum, allowedWidth);
     }
 }

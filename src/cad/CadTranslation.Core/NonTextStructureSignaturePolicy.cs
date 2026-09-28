@@ -12,7 +12,7 @@ public static class NonTextStructureSignaturePolicy
 {
     public static string StableOwnerPath(string ownerPath)
     {
-        ArgumentNullException.ThrowIfNull(ownerPath);
+        ThrowIfNull(ownerPath);
         return Regex.Replace(ownerPath,
             @"/\*[A-Z][0-9A-F]+/([0-9A-F]+)(?=/|$)",
             "/<anonymous-block>/$1",
@@ -21,8 +21,8 @@ public static class NonTextStructureSignaturePolicy
 
     public static string StableEntityIdentity(string handle, string ownerPath)
     {
-        ArgumentNullException.ThrowIfNull(handle);
-        ArgumentNullException.ThrowIfNull(ownerPath);
+        ThrowIfNull(handle);
+        ThrowIfNull(ownerPath);
         // Legacy SaveAs may renumber entities inside anonymous (*X/*D/etc.)
         // definitions. Their type, owner, properties and geometry remain the
         // structural identity; the transient handle does not.
@@ -33,9 +33,9 @@ public static class NonTextStructureSignaturePolicy
 
     public static string GeometryToken(string objectType, string stablePlacement, string geometricExtents)
     {
-        ArgumentNullException.ThrowIfNull(objectType);
-        ArgumentNullException.ThrowIfNull(stablePlacement);
-        ArgumentNullException.ThrowIfNull(geometricExtents);
+        ThrowIfNull(objectType);
+        ThrowIfNull(stablePlacement);
+        ThrowIfNull(geometricExtents);
 
         return string.Equals(objectType, "AcDbBlockReference", StringComparison.Ordinal)
             ? stablePlacement

@@ -27,8 +27,8 @@ public static partial class TranslationValidator
         IReadOnlyList<ManifestRecord> manifestRecords,
         IReadOnlyList<TranslationRecord> translationRecords)
     {
-        ArgumentNullException.ThrowIfNull(manifestRecords);
-        ArgumentNullException.ThrowIfNull(translationRecords);
+        ThrowIfNull(manifestRecords);
+        ThrowIfNull(translationRecords);
 
         var errors = new List<CommandError>();
         var manifestById = new Dictionary<string, ManifestRecord>(StringComparer.Ordinal);
@@ -128,7 +128,7 @@ public static partial class TranslationValidator
         IReadOnlyList<ProtectedToken> protectedTokens = manifest.ProtectedTokens;
         string translatedText = translation.TranslatedText ?? string.Empty;
         string[] expectedMarkers = protectedTokens.Select(token => token.Marker).ToArray();
-        string[] actualMarkers = Marker.Matches(translatedText).Select(match => match.Value).ToArray();
+        string[] actualMarkers = Marker.Matches(translatedText).Cast<Match>().Select(match => match.Value).ToArray();
         if (!expectedMarkers.SequenceEqual(actualMarkers, StringComparer.Ordinal))
         {
             errors.Add(Error("protected_marker_mismatch", "Protected markers must be present exactly once and in order.", manifest.RecordId, manifest.Handle));
@@ -137,7 +137,7 @@ public static partial class TranslationValidator
         string restoredTranslation = RestoreProtectedTokensForOutput(translatedText, protectedTokens);
         string[] expectedInvariants = NormalizeInvariantTokens(manifest.RawText ?? string.Empty).ToArray();
         string[] actualInvariants = NormalizeInvariantTokens(restoredTranslation).ToArray();
-        if (!expectedInvariants.SequenceEqual(actualInvariants, StringComparer.Ordinal))
+        if (!InvariantTokensMatch(manifest.PlainText ?? string.Empty, expectedInvariants, actualInvariants))
         {
             errors.Add(Error("numeric_or_protected_token_mismatch", $"Numeric, unit, or model tokens changed. Expected [{string.Join(", ", expectedInvariants)}]; actual [{string.Join(", ", actualInvariants)}].", manifest.RecordId, manifest.Handle));
         }
@@ -170,7 +170,7 @@ public static partial class TranslationValidator
         }
         // Model identifiers retain their existing case-insensitive comparison;
         // physical unit prefixes must preserve case (milli versus mega).
-        return normalized.Length > 0 && char.IsAsciiLetter(normalized[0])
+        return normalized.Length > 0 && IsAsciiLetter(normalized[0])
             ? normalized.ToUpperInvariant()
             : normalized.Replace('μ', 'µ');
     }
@@ -198,7 +198,7 @@ public static partial class TranslationValidator
 
     public static ProtectedToken NormalizeProtectedTokenForOutput(ProtectedToken token)
     {
-        ArgumentNullException.ThrowIfNull(token);
+        ThrowIfNull(token);
         string outputRaw = token.Kind == "number-unit"
             ? NormalizeChineseUnitForOutput(token.Raw)
             : token.Raw.Replace(@"\F宋体|", @"\FSimSun|", StringComparison.OrdinalIgnoreCase);
@@ -216,14 +216,140 @@ public static partial class TranslationValidator
     }
 
     public static bool HasSameInvariantTokens(string source, string candidate) =>
-        NormalizeInvariantTokens(source ?? string.Empty).SequenceEqual(NormalizeInvariantTokens(candidate ?? string.Empty), StringComparer.Ordinal);
+        InvariantTokensMatch(
+            source ?? string.Empty,
+            NormalizeInvariantTokens(source ?? string.Empty).ToArray(),
+            NormalizeInvariantTokens(candidate ?? string.Empty).ToArray());
+
+    // Chinese counting characters never enter the invariant token set, yet their faithful rendering is
+    // a digit (十六 -> 16, 七级 -> Grade 7, 第十一条 -> Article 11). Allow exactly the numbers whose
+    // values parse from the source's numeral runs; any other added digit is still a hallucinated value.
+    private static bool InvariantTokensMatch(string plainSource, string[] expected, string[] actual)
+    {
+        if (expected.SequenceEqual(actual, StringComparer.Ordinal))
+        {
+            return true;
+        }
+
+        List<string> remainder = new List<string>(actual);
+        foreach (long value in ChineseNumeralValues(Marker.Replace(plainSource ?? string.Empty, string.Empty)))
+        {
+            remainder.Remove(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        return remainder.SequenceEqual(expected, StringComparer.Ordinal);
+    }
+
+    private static IEnumerable<long> ChineseNumeralValues(string text)
+    {
+        string trimmed = (text ?? string.Empty);
+        int index = 0;
+        while (index < trimmed.Length)
+        {
+            if (ChineseNumeralValue(trimmed[index]) < 0)
+            {
+                index++;
+                continue;
+            }
+
+            int end = index;
+            while (end < trimmed.Length && ChineseNumeralValue(trimmed[end]) >= 0)
+            {
+                end++;
+            }
+
+            if (TryParseChineseNumeral(trimmed.Substring(index, end - index), out long value))
+            {
+                yield return value;
+            }
+
+            index = end;
+        }
+    }
+
+    private static bool TryParseChineseNumeral(string text, out long value)
+    {
+        value = 0;
+        string trimmed = (text ?? string.Empty).Trim();
+        if (trimmed.Length == 0 || trimmed.Length > 8)
+        {
+            return false;
+        }
+
+        long total = 0;
+        long current = 0;
+        bool any = false;
+        foreach (char character in trimmed)
+        {
+            int digit = ChineseNumeralValue(character);
+            if (digit < 0)
+            {
+                if (character is ' ' or '　' or '.' or '、' or ',' or '，' or '。')
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            any = true;
+            if (digit >= 10)
+            {
+                total += (current == 0 ? 1 : current) * digit;
+                current = 0;
+            }
+            else
+            {
+                current = digit;
+            }
+        }
+
+        if (!any)
+        {
+            return false;
+        }
+
+        value = total + current;
+        return value > 0;
+    }
+
+    private static int ChineseNumeralValue(char character) => character switch
+    {
+        '零' or '〇' => 0,
+        '一' or '壹' => 1,
+        '二' or '两' or '贰' => 2,
+        '三' or '叁' => 3,
+        '四' or '肆' => 4,
+        '五' or '伍' => 5,
+        '六' or '陆' => 6,
+        '七' or '柒' => 7,
+        '八' or '捌' => 8,
+        '九' or '玖' => 9,
+        '十' or '拾' => 10,
+        '百' or '佰' => 100,
+        '千' or '仟' => 1000,
+        '万' => 10000,
+        _ => -1,
+    };
 
     private static CommandError Error(string code, string message, string? recordId, string? handle) =>
         new(code, message, recordId, handle);
 
-    [GeneratedRegex("⟦P\\d{4}⟧")]
+    private const string MarkerPatternText = "⟦P\\d{4}⟧";
+    private const string InvariantTokenPatternText = @"Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)|" + ProtectedText.NumberPattern + "|" + ProtectedText.ModelPattern;
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(MarkerPatternText)]
     private static partial Regex MarkerPattern();
 
-    [GeneratedRegex(@"Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)|" + ProtectedText.NumberPattern + "|" + ProtectedText.ModelPattern)]
+    [GeneratedRegex(InvariantTokenPatternText)]
     private static partial Regex InvariantTokenPattern();
+#else
+    // .NET Framework hosts (AutoCAD 2020-2024) have no GeneratedRegex source generator.
+    private static readonly Regex MarkerPatternValue = new Regex(MarkerPatternText, RegexOptions.Compiled);
+    private static readonly Regex InvariantTokenPatternValue = new Regex(InvariantTokenPatternText, RegexOptions.Compiled);
+
+    private static Regex MarkerPattern() => MarkerPatternValue;
+    private static Regex InvariantTokenPattern() => InvariantTokenPatternValue;
+#endif
 }

@@ -15,11 +15,12 @@ public static class CandidateContentVerifier
         IReadOnlyList<ManifestRecord> manifestRecords,
         IReadOnlyList<TranslationRecord> translationRecords,
         IReadOnlyList<CandidateTextRecord> candidateRecords,
-        IReadOnlyDictionary<string, CandidateIdentityOverride>? identityOverrides = null)
+        IReadOnlyDictionary<string, CandidateIdentityOverride>? identityOverrides = null,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? fragmentMergeGroups = null)
     {
-        ArgumentNullException.ThrowIfNull(manifestRecords);
-        ArgumentNullException.ThrowIfNull(translationRecords);
-        ArgumentNullException.ThrowIfNull(candidateRecords);
+        ThrowIfNull(manifestRecords);
+        ThrowIfNull(translationRecords);
+        ThrowIfNull(candidateRecords);
 
         var errors = new List<CommandError>();
         BatchValidationResult batch = TranslationValidator.ValidateBatch(manifestRecords, translationRecords);
@@ -39,6 +40,11 @@ public static class CandidateContentVerifier
             .Where(group => group.Count() == 1)
             .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
         var candidatesById = new Dictionary<string, CandidateTextRecord>(StringComparer.Ordinal);
+        // Records of a merged exploded row carry only a fragment of the survivor
+        // line; they are checked as a group after the per-record loop.
+        HashSet<string> mergedRecordIds = fragmentMergeGroups?
+            .Values.SelectMany(memberIds => memberIds)
+            .ToHashSet(StringComparer.Ordinal) ?? [];
 
         foreach (CandidateTextRecord candidate in candidateRecords)
         {
@@ -94,6 +100,10 @@ public static class CandidateContentVerifier
                 errors.Add(Error("candidate_object_type_mismatch", "Candidate object type does not match the manifest.", recordId, candidate.Handle));
             if (!string.Equals(expectedSlot, candidate.Slot, StringComparison.Ordinal))
                 errors.Add(Error("candidate_slot_mismatch", "Candidate slot does not match the manifest.", recordId, candidate.Handle));
+            if (mergedRecordIds.Contains(recordId))
+            {
+                continue;
+            }
 
             string expected = TranslationValidator.RestoreProtectedTokensForOutput(translation.TranslatedText ?? string.Empty, manifest.ProtectedTokens);
             string actualText = candidate.ActualText ?? string.Empty;
@@ -115,6 +125,54 @@ public static class CandidateContentVerifier
             catch (FormatException)
             {
                 errors.Add(Error("candidate_text_parse_failed", "Candidate text is not valid protected CAD text.", recordId, candidate.Handle));
+            }
+        }
+
+        foreach ((string survivorId, IReadOnlyList<string> memberIds) in fragmentMergeGroups ??
+                 (IReadOnlyDictionary<string, IReadOnlyList<string>>)new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal))
+        {
+            if (!candidatesById.TryGetValue(survivorId, out CandidateTextRecord? survivorCandidate))
+            {
+                errors.Add(Error("candidate_record_missing", "Every manifest record requires exactly one candidate value.", survivorId, null));
+                continue;
+            }
+
+            var expectedText = new System.Text.StringBuilder();
+            var sourceText = new System.Text.StringBuilder();
+            var expectedTokens = new List<string>();
+            bool incomplete = false;
+            foreach (string memberId in memberIds)
+            {
+                if (!manifestById.TryGetValue(memberId, out ManifestRecord? memberManifest) ||
+                    !translationsById.TryGetValue(memberId, out TranslationRecord? memberTranslation))
+                {
+                    incomplete = true;
+                    break;
+                }
+
+                expectedText.Append(TranslationValidator.RestoreProtectedTokensForOutput(
+                    memberTranslation.TranslatedText ?? string.Empty, memberManifest.ProtectedTokens));
+                sourceText.Append(memberManifest.RawText);
+                expectedTokens.AddRange(memberManifest.ProtectedTokens
+                    .Select(TranslationValidator.NormalizeProtectedTokenForOutput)
+                    .Where(IsStructuralProtectedToken)
+                    .Select(token => token.Raw));
+            }
+
+            if (incomplete)
+            {
+                errors.Add(Error("candidate_record_missing", "Every manifest record requires exactly one candidate value.", survivorId, survivorCandidate.Handle));
+                continue;
+            }
+
+            string actualText = survivorCandidate.ActualText ?? string.Empty;
+            // Exact concatenation equality is the fidelity gate for a merged row: it
+            // detects any import-time corruption of the survivor line. Per-record
+            // token gates cannot apply here because fragments legitimately convert
+            // Chinese numerals and units across member boundaries.
+            if (!string.Equals(expectedText.ToString(), actualText, StringComparison.Ordinal))
+            {
+                errors.Add(Error("candidate_fragment_merge_mismatch", "Merged note-column row does not equal the concatenation of its fragment translations.", survivorId, survivorCandidate.Handle));
             }
         }
 
@@ -156,7 +214,12 @@ public static class LayoutTextNormalization
             int separator = normalized.IndexOf(';', 3);
             if (separator >= 0 &&
                 double.TryParse(
+#if NETFRAMEWORK
+                    // The ReadOnlySpan overload is .NET Core only; the substring holds the same characters.
+                    normalized.Substring(3, separator - 3),
+#else
                     normalized.AsSpan(3, separator - 3),
+#endif
                     NumberStyles.Float,
                     CultureInfo.InvariantCulture,
                     out double scale) &&

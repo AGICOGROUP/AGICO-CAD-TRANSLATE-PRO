@@ -11,7 +11,7 @@ public static class BilingualLocalPlacement
         double height, IReadOnlyList<Rect2> obstacles, double margin, IReadOnlyList<Rect2>? anchorHints = null,
         Func<Rect2, bool>? isAvailable = null)
     {
-        if (!double.IsFinite(width) || !double.IsFinite(height) || !double.IsFinite(margin)
+        if (!IsFinite(width) || !IsFinite(height) || !IsFinite(margin)
             || width <= 0 || height <= 0 || margin < 0)
             return Array.Empty<Rect2>();
 
@@ -46,7 +46,7 @@ public static class BilingualLocalPlacement
             ys.Add(obstacle.Top + clearance);
         }
         double[] SelectAnchors(IEnumerable<double> all, IEnumerable<double> essential, double min, double max, double center) =>
-            essential.Select(x=>Math.Clamp(x,min,max)).Concat(all.Select(x=>Math.Clamp(x,min,max))
+            essential.Select(x=>Clamp(x,min,max)).Concat(all.Select(x=>Clamp(x,min,max))
                 .OrderBy(x=>Math.Abs(x-center))
                 .GroupBy(x=>Math.Round((x-center)/Math.Max(1e-9,margin*.02)))
                 .Select(g=>g.First()).Take(16)).Distinct().ToArray();

@@ -31,7 +31,7 @@ public static partial class BilingualFixedLabelPolicy
     public static BilingualFixedLabelSelection Select(
         IReadOnlyList<BilingualFixedLabelSample> samples)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
 
         var mixed = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (BilingualFixedLabelSample sample in samples)
@@ -229,7 +229,7 @@ public static partial class BilingualFixedLabelPolicy
 
     private static string CanonicalLabel(string value)
     {
-        string label = string.Join(' ', EquivalentTokens(value));
+        string label = string.Join(" ", EquivalentTokens(value));
         return label switch
         {
             "project name" => "project",
@@ -243,6 +243,7 @@ public static partial class BilingualFixedLabelPolicy
 
     private static string[] LatinTokens(string value) =>
         LatinWordPattern().Matches(value ?? string.Empty)
+            .Cast<Match>()
             .Select(match => match.Value.ToLowerInvariant())
             .Where(token => token.Length >= 2)
             .ToArray();
@@ -261,17 +262,35 @@ public static partial class BilingualFixedLabelPolicy
 
     private static bool IsCjk(char value) => value is >= '\u3400' and <= '\u9fff' or >= '\uf900' and <= '\ufaff';
 
-    [GeneratedRegex(@"[A-Za-z]+")]
+    private const string LatinWordPatternText = @"[A-Za-z]+";
+    private const string MeaningfulEnglishWordPatternText = @"(?<![A-Za-z0-9_.-])[A-Za-z]{4,}(?![A-Za-z0-9_.-])";
+    private const string MTextControlPatternText = @"\\[A-Za-z][^;]*;";
+    private const string WhitespacePatternText = @"\s+";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(LatinWordPatternText)]
     private static partial Regex LatinWordPattern();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9_.-])[A-Za-z]{4,}(?![A-Za-z0-9_.-])")]
+    [GeneratedRegex(MeaningfulEnglishWordPatternText)]
     private static partial Regex MeaningfulEnglishWordPattern();
 
-    [GeneratedRegex(@"\\[A-Za-z][^;]*;")]
+    [GeneratedRegex(MTextControlPatternText)]
     private static partial Regex MTextControlPattern();
 
-    [GeneratedRegex(@"\s+")]
+    [GeneratedRegex(WhitespacePatternText)]
     private static partial Regex WhitespacePattern();
+#else
+    // .NET Framework hosts (AutoCAD 2020-2024) have no GeneratedRegex source generator.
+    private static readonly Regex LatinWordPatternValue = new Regex(LatinWordPatternText, RegexOptions.Compiled);
+    private static readonly Regex MeaningfulEnglishWordPatternValue = new Regex(MeaningfulEnglishWordPatternText, RegexOptions.Compiled);
+    private static readonly Regex MTextControlPatternValue = new Regex(MTextControlPatternText, RegexOptions.Compiled);
+    private static readonly Regex WhitespacePatternValue = new Regex(WhitespacePatternText, RegexOptions.Compiled);
+
+    private static Regex LatinWordPattern() => LatinWordPatternValue;
+    private static Regex MeaningfulEnglishWordPattern() => MeaningfulEnglishWordPatternValue;
+    private static Regex MTextControlPattern() => MTextControlPatternValue;
+    private static Regex WhitespacePattern() => WhitespacePatternValue;
+#endif
 
     private sealed record PairCandidate(
         BilingualFixedLabelSample Chinese,

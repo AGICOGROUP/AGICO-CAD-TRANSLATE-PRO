@@ -11,6 +11,8 @@ internal static class EntityWalker
         BlockTable blockTable = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
         var dimensionBlockIds = FindDimensionGeneratedBlocks(blockTable, transaction);
         var visited = new HashSet<ObjectId>();
+        int walked = 0;
+        const int ProbeFrom = 46000;
 
         foreach (ObjectId blockId in blockTable)
         {
@@ -28,7 +30,10 @@ internal static class EntityWalker
                     continue;
                 }
 
+                walked++;
+                if (walked >= ProbeFrom) DrawingExporter.Progress("get-before " + walked + " " + entityId.Handle.ToString() + " " + block.Name);
                 var value = transaction.GetObject(entityId, OpenMode.ForRead, false);
+                if (walked >= ProbeFrom) DrawingExporter.Progress("get-after " + walked + " " + value.GetType().Name);
                 yield return new WalkItem(value, blockOwnerPath, value.Handle.ToString(), false);
 
                 if (value is not BlockReference reference)

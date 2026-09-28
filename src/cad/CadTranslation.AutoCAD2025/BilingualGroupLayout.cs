@@ -162,12 +162,25 @@ internal static class BilingualGroupLayout
                 var crossingFallback=default((Rect2 Destination,double Height,IReadOnlyList<Rect2> Sizes,double Gap));
                 foreach(double scale in new[]{1.0,.9,.8,.7})
                 {
-                    double height=sourceHeight*scale, gap=height*.45;
+                    double height=sourceHeight*scale, gap=height*.7;
                     var sizes=new List<Rect2>();
                     foreach(var value in display)
                     {
-                        using var probe=Probe(db,value,height,width,language);
-                        sizes.Add(BilingualPlacementChecks.Footprint(probe));
+                        // Viewers that substitute the style font re-wrap English
+                        // wider than this session renders it. Probe at a narrower
+                        // wrap so the planned slot already reserves those extra
+                        // lines; a block that then draws shorter simply leaves
+                        // slack, while an exact-width probe drifts a line down
+                        // into the next stacked slot and the saved review, which
+                        // measures with the same session fonts, never sees it.
+                        using var probe=Probe(db,value,height,width*.88,language);
+                        var probed=BilingualPlacementChecks.Footprint(probe);
+                        // A viewer font can run well over 12% wider than this
+                        // session's substitution, so even the conservative wrap
+                        // can lose an extra line at read time. Reserve 0.6 of a
+                        // line per slot: the block then leaves empty slack here
+                        // rather than drifting a full line into the slot below.
+                        sizes.Add(new Rect2(probed.Left,probed.Bottom-height*.6,probed.Right,probed.Top));
                     }
                     if(sizes.Any(b=>b.Width>group.Source.Width+1e-5)) continue;
                     double total=sizes.Sum(b=>b.Height)+gap*(sizes.Count-1);

@@ -20,16 +20,22 @@ internal static class ReplaceLocalCorrection
         foreach (string id in selected)
         {
             var source = originals[id];
-            if (!source.DefinitionName.StartsWith("*Model_Space", StringComparison.Ordinal) &&
-                !source.DefinitionName.StartsWith("*Paper_Space", StringComparison.Ordinal)) continue;
+            // Block-definition content is repaired in definition-local space: every
+            // placed instance carries the same text, so one move fixes all of them.
+            // Attributes and rotated text stay excluded by the entity checks below.
             var definition = baseline.Definitions.Single(d => d.Name == source.DefinitionName);
             double h = source.Source.OriginalTextHeight;
             Rect2 originalBox = rows[id].CandidateBounds;
-            Rect2 allowed = source.Region is { Kind: LayoutRegionKind.TableCell or LayoutRegionKind.TitleBlock } region
+            // A text that owns a region may only be reflowed inside it: the grid
+            // search otherwise trades a contact for a cross-region escape (a note
+            // line sliding whole out of its column was accepted by the frame-level
+            // bound and only caught by the pass-2 audit).
+            Rect2 allowed = source.Region is { Kind: LayoutRegionKind.TableCell or LayoutRegionKind.TitleBlock or LayoutRegionKind.NoteColumn } region
                 ? region.Bounds : definition.Regions.Where(r => r.Kind == LayoutRegionKind.ClosedFrame && r.Bounds.Contains(source.Source.Bounds))
                     .OrderBy(r => r.Bounds.Area).Select(r => r.Bounds).FirstOrDefault(
                         new Rect2(originalBox.Left - 6*h, originalBox.Bottom - 6*h, originalBox.Right + 6*h, originalBox.Top + 6*h));
             using var tx = db.TransactionManager.StartTransaction();
+            db.DisableUndoRecording(true);
             var entity = (Entity)tx.GetObject(db.GetObjectId(false, new Handle(long.Parse(rows[id].NewHandle, NumberStyles.HexNumber)), 0), OpenMode.ForWrite);
             if (entity is not MText && (entity is not DBText || entity is AttributeDefinition or AttributeReference)) continue;
             double rotation = entity is MText mt ? mt.Rotation : ((DBText)entity).Rotation;
@@ -39,9 +45,16 @@ internal static class ReplaceLocalCorrection
             double initialHeight = entity is MText m ? m.TextHeight : ((DBText)entity).Height;
             double initialWidth = entity is MText mw ? mw.Width : ((DBText)entity).WidthFactor;
             var owner = (BlockTableRecord)tx.GetObject(entity.OwnerId, OpenMode.ForRead);
+            // Proposals always sit inside `allowed`, so measured geometry outside it
+            // can never collide; dropping it keeps CAXA sheet definitions (thousands
+            // of frame entities) from multiplying every safe() check. Unknown bounds
+            // stay in: they are never treated as free whitespace.
             var obstacles = owner.Cast<ObjectId>().Where(oid => oid != entity.ObjectId)
                 .Select(oid => tx.GetObject(oid, OpenMode.ForRead)).OfType<Entity>()
-                .Where(e => e is not DBText and not MText && !e.IsErased).ToArray();
+                .Where(e => e is not DBText and not MText && !e.IsErased)
+                .Where(e => CadLayoutGeometry.TryBounds(e) is not { } b ||
+                    (b.MinX <= allowed.Right && b.MaxX >= allowed.Left &&
+                     b.MinY <= allowed.Top && b.MaxY >= allowed.Bottom)).ToArray();
             bool safe(Rect2 box)
             {
                 if (!allowed.Contains(box)) return false;
@@ -62,15 +75,20 @@ internal static class ReplaceLocalCorrection
             }
             bool placed = false;
             // Preserve current readable size first. MText may use genuine horizontal
-            // whitespace before the final bounded shrink attempts.
-            foreach (double scale in new[] {1.0, .85, .70})
+            // whitespace before the final bounded shrink attempts. A single-line DBText
+            // cannot wrap, so condensed width factors join the ladder: narrow table
+            // headers clear their neighbours by squeezing horizontally first. The final
+            // rungs reach the same 0.25 height floor the fitter is allowed in dense
+            // regions; anything above it left merged-cell labels (页/PAGE beside a wide
+            // number) with no legal placement at all.
+            foreach (double scale in new[] {1.0, .85, .70, .55, .40, .28})
             {
-                double height = Math.Max(initialHeight * scale, Math.Min(initialHeight, h * .55));
-                foreach (double widthScale in entity is MText ? new[] {1.0, 1.6, 2.2} : new[] {1.0})
+                double height = Math.Max(initialHeight * scale, Math.Min(initialHeight, h * .25));
+                foreach (double widthScale in entity is MText ? new[] {1.0, 1.6, 2.2} : new[] {1.0, .7, .55})
                 {
                     entity.CopyFrom(saved);
                     if (entity is MText text) { text.TextHeight = height; if (initialWidth > 0) text.Width = initialWidth * widthScale; }
-                    else ((DBText)entity).Height = height;
+                    else { ((DBText)entity).Height = height; ((DBText)entity).WidthFactor = Math.Max(initialWidth * widthScale, .2); }
                     if (CadLayoutGeometry.TryBounds(entity) is not { } measured) continue;
                     var current = new Rect2(measured.MinX, measured.MinY, measured.MaxX, measured.MaxY);
                     foreach (Rect2 proposal in ReplaceLocalPlacement.Candidates(originalBox, current.Width, current.Height, h, allowed))
@@ -82,7 +100,8 @@ internal static class ReplaceLocalCorrection
                             occupied[id] = new Rect2(actual.MinX, actual.MinY, actual.MaxX, actual.MaxY);
                             corrections.Add(new LayoutAdjustment(id, rows[id].OldHandle, rows[id].NewHandle, entity.GetRXClass().Name,
                                 new[] {"local-collision-correction"}, h, height, source.ObjectType == "AcDbText" ? initialWidth : 1,
-                                source.ObjectType == "AcDbText" ? initialWidth : 1, Bounds2d.From(source.Source.Bounds), actual, false, "bounded-local-whitespace"));
+                                source.ObjectType == "AcDbText" ? Math.Max(initialWidth * widthScale, .2) : 1,
+                                Bounds2d.From(source.Source.Bounds), actual, false, "bounded-local-whitespace"));
                             placed = true; break;
                         }
                         entity.TransformBy(Matrix3d.Displacement(-delta));

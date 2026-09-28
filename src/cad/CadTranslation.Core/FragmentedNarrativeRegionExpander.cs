@@ -8,8 +8,8 @@ public static class FragmentedNarrativeRegionExpander
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(seed);
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(seed);
+        ThrowIfNull(samples);
         IReadOnlyDictionary<string, FragmentedNarrativeSample> byId = samples
             .ToDictionary(sample => sample.Id, StringComparer.Ordinal);
         FragmentedNarrativeSample[] seedSamples = seed.MemberIds
@@ -45,6 +45,6 @@ public static class FragmentedNarrativeRegionExpander
     {
         double[] ordered = values.OrderBy(value => value).ToArray();
         int index = (int)Math.Round((ordered.Length - 1) * percentile);
-        return ordered[Math.Clamp(index, 0, ordered.Length - 1)];
+        return ordered[Clamp(index, 0, ordered.Length - 1)];
     }
 }

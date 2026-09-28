@@ -7,6 +7,23 @@ HAN = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\U00020000-\U000323af]")
 CJK = re.compile(r"[\u2e80-\u303f\u31c0-\u31ef\u3400-\u9fff\uf900-\ufaff\ufe10-\ufe1f\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffee\U00020000-\U000323af]")
 LATIN = re.compile(r"[A-Za-z]{2,}")
 MARKER = re.compile(r"⟦P\d{4}⟧")
+# Chinese counting characters only: section headings such as 一 / 十六 whose correct English is a
+# bare number. Requiring a two-letter word there rejected correct translations.
+NUMERAL_SOURCE = re.compile(r"^[一二三四五六七八九十百千万亿零两〇壹贰叁肆伍陆柒捌玖拾佰仟\s.,、·:：()（）-]+$")
+NUMERIC_TARGET = re.compile(r"^(?:[0-9]+|[IVXLCDM]+)\s*[.)]?$", re.IGNORECASE)
+
+def numeral_only_source(text):
+    """True when the visible source is nothing but Chinese numerals/counting characters."""
+    text = (text or "").strip()
+    return bool(text) and bool(HAN.search(text)) and bool(NUMERAL_SOURCE.match(text))
+
+def numeric_target_ok(text):
+    """True when the target is a plain arabic or roman number, optionally with a list punctuation."""
+    return bool(NUMERIC_TARGET.match((text or "").strip()))
+
+def numeric_rendering(source_visible, target):
+    """A numeral-only source may be rendered as a number instead of an ASCII word."""
+    return numeral_only_source(source_visible) and numeric_target_ok(target)
 
 def language(value):
     value = value.lower().strip()

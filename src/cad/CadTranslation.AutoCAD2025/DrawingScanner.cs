@@ -14,6 +14,7 @@ internal static class DrawingScanner
         Database database = HostApplicationServices.WorkingDatabase;
         string sourceHashBefore = Hashing.Sha256File(context.Config.SourcePath);
         using Transaction transaction = database.TransactionManager.StartTransaction();
+        database.DisableUndoRecording(true);
         ScanSnapshot snapshot = BuildSnapshot(database, transaction, context.Config.SourcePath, sourceHashBefore);
         transaction.Commit();
         context.VerifySourceAndWorkingHashes();

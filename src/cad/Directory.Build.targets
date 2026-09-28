@@ -1,0 +1,11 @@
+<Project>
+  <!-- Imported after each project body, so $(TargetFramework) is resolved here; it is still empty while
+       Directory.Build.props is evaluated, which is why this override cannot live there.
+       The .NET Framework and AutoCAD 2020-2024 reference assemblies carry no nullable annotations, so
+       strict analysis would flag every BCL and AutoCAD return value as maybe-null. Annotations stay on
+       (shared source keeps documenting nullability) and only the warnings are dropped; the .NET 8 build
+       for AutoCAD 2025 remains fully strict. -->
+  <PropertyGroup Condition="$(TargetFramework.StartsWith('net4'))">
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+</Project>

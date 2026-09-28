@@ -12,6 +12,20 @@ var tests = new (string Name, Action Run)[]
         foreach(var field in new[]{"日期","签名","实名","专 业"}) AssertEx.True(BilingualTitlePanel.IsTitleField(field));
         AssertEx.False(BilingualTitlePanel.IsTitleField("设备生产日期说明"));
     }),
+    ("target_font_reuses_source_face_and_falls_back_when_absent", () => {
+        AssertEx.Equal(@"\Fisocp,hztxt|c134;",NarrativeTargetFontPolicy.ResolvePrefix("isocp,hztxt|c134"));
+        AssertEx.Equal(@"\Farial|b0|i0|c134|p2;",NarrativeTargetFontPolicy.ResolvePrefix("arial|b0|i0|c134|p2"));
+        AssertEx.Equal(@"\FSimSun|b0|i0|c134|p2;",NarrativeTargetFontPolicy.ResolvePrefix("SimSun|b0|i0|c134|p2"));
+        AssertEx.Equal(@"\FArial;",NarrativeTargetFontPolicy.ResolvePrefix("宋体|c134"));
+        AssertEx.Equal(@"\FArial;",NarrativeTargetFontPolicy.ResolvePrefix("hztxt"));
+        AssertEx.Equal(@"\FArial;",NarrativeTargetFontPolicy.ResolvePrefix("gbcbig.shx"));
+        AssertEx.Equal(@"\FArial;",NarrativeTargetFontPolicy.ResolvePrefix(null));
+        AssertEx.Equal(@"{\Fisocp,hztxt|c134;Cam Latch Switch}",NarrativeTargetFontPolicy.ApplyLatinWrapper("Cam Latch Switch","isocp,hztxt|c134"));
+        AssertEx.Equal(@"{\FArial;Steel Column}",NarrativeTargetFontPolicy.ApplyLatinWrapper("Steel Column","宋体|c134"));
+        AssertEx.Equal("钢柱接头",NarrativeTargetFontPolicy.ApplyLatinWrapper("钢柱接头","isocp,hztxt|c134"));
+        AssertEx.Equal(@"\FArial;",NarrativeTargetFontPolicy.ResolvePrefix("hztxt,isocp"));
+        AssertEx.Equal(@"\Fisocp,hztxt|c134;",NarrativeTargetFontPolicy.ResolvePrefix("isocp,hztxt|c134"));
+    }),
     ("table_copy_search_orders_wide_tables_toward_frame_interior", () => {
         var table=new Rect2(60,0,90,20);
         var candidates=BilingualTablePlacement.AdjacentCopySearch(table,2,[new Rect2(0,0,100,100)]).ToArray();
@@ -329,6 +343,13 @@ var tests = new (string Name, Action Run)[]
         AssertEx.True(candidates.All(r => cell.Contains(r)));
         AssertEx.True(candidates.All(r => Math.Abs(r.Center.X-source.Center.X) <= 12 && Math.Abs(r.Center.Y-source.Center.Y) <= 12));
         AssertEx.Equal(0, ReplaceLocalPlacement.Candidates(source, 30, 3, 2, cell).Count);
+        // The grid widens the search beyond the four immediate neighbours and the
+        // list is ordered smallest-change-first by distance from the source centre.
+        AssertEx.True(candidates.Count > 5);
+        var distances = candidates.Select(r => Math.Pow(r.Center.X - source.Center.X, 2) + Math.Pow(r.Center.Y - source.Center.Y, 2)).ToArray();
+        AssertEx.True(distances.SequenceEqual(distances.OrderBy(d => d)));
+        // The bounded-budget mode keeps only the immediate anchors for deep rungs.
+        AssertEx.True(ReplaceLocalPlacement.Candidates(source, 10, 2, 2, cell, grid: false).Count <= 5);
     }),
     ("replacement_local_search_does_not_escape_a_tight_title_cell", () => {
         var cell = new Rect2(0, 0, 10, 2);
@@ -339,8 +360,9 @@ var tests = new (string Name, Action Run)[]
             ("a", (string?)"b", "text-overlap", "high"),
             ("a", (string?)null, "geometry-contact", "high"),
             ("c", (string?)null, "geometry-overlap", "high"),
-            ("d", (string?)null, "text-overlap", "low") }, new[] {"a", "c", "d"});
-        AssertEx.Equal("a", string.Join(",", selected));
+            ("e", (string?)null, "cross-region", "high"),
+            ("d", (string?)null, "text-overlap", "low") }, new[] {"a", "c", "d", "e"});
+        AssertEx.Equal("a,e", string.Join(",", selected));
     }),
     ("bilingual_title_equivalence_is_bounded_and_preserves_technical_qualifiers", () => {
         AssertEx.True(BilingualLabelEquivalence.Matches("Designed by", "Design"));

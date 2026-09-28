@@ -5,7 +5,7 @@ public static class JobPathPolicy
 {
     public static string ResolveJobRoot(string configPath)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ThrowIfNullOrWhiteSpace(configPath);
 
         string fullConfigPath = Path.GetFullPath(configPath);
         string configDirectory = Path.GetDirectoryName(fullConfigPath)

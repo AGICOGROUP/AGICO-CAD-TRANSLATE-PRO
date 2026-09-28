@@ -61,7 +61,7 @@ public static class NarrativeRegionRightBoundary
 
         double[] orderedRights = sourceRights.OrderBy(value => value).ToArray();
         int percentileIndex = (int)Math.Round((orderedRights.Length - 1) * 0.95);
-        double right = orderedRights[Math.Clamp(percentileIndex, 0, orderedRights.Length - 1)];
+        double right = orderedRights[Clamp(percentileIndex, 0, orderedRights.Length - 1)];
         NarrativeRegionEnvelope? neighbor = followingRegions
             .Where(region => region.Top > bottom && region.Bottom < top)
             .OrderBy(region => region.Left)

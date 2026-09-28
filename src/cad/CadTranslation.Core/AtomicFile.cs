@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace CadTranslation.Core;
@@ -18,14 +19,14 @@ public static class AtomicFile
         try
         {
             using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-            using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), leaveOpen: true))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), 1024, leaveOpen: true))
             {
                 writer.Write(content);
                 writer.Flush();
                 stream.Flush(flushToDisk: true);
             }
 
-            File.Move(tempPath, fullPath, overwrite: true);
+            ReplaceFile(tempPath, fullPath);
         }
         catch
         {
@@ -44,4 +45,28 @@ public static class AtomicFile
             throw;
         }
     }
+
+    // File.Move(overwrite) is .NET Core 3.0+. On .NET Framework use MoveFileEx so the destination is
+    // replaced in one step; delete-then-move would leave a window where the target file does not exist,
+    // which is exactly what an atomic writer must not do.
+    private static void ReplaceFile(string sourcePath, string destinationPath)
+    {
+#if NETFRAMEWORK
+        if (!MoveFileEx(sourcePath, destinationPath, MOVEFILE_REPLACE_EXISTING))
+        {
+            throw new IOException(
+                "Unable to replace " + destinationPath + " (Win32 error " + Marshal.GetLastWin32Error() + ").");
+        }
+#else
+        File.Move(sourcePath, destinationPath, overwrite: true);
+#endif
+    }
+
+#if NETFRAMEWORK
+    private const int MOVEFILE_REPLACE_EXISTING = 1;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileEx(string lpExistingFileName, string lpNewFileName, int dwFlags);
+#endif
 }

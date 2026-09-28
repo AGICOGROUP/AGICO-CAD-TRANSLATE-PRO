@@ -122,8 +122,8 @@ public static class TextBoundsEstimator
         Point2 anchor,
         TextAttachmentKind attachment)
     {
-        double x = Math.Clamp(anchor.X, allowed.Left, allowed.Right);
-        double y = Math.Clamp(anchor.Y, allowed.Bottom, allowed.Top);
+        double x = Clamp(anchor.X, allowed.Left, allowed.Right);
+        double y = Clamp(anchor.Y, allowed.Bottom, allowed.Top);
         int column = (int)attachment % 3;
         int row = (int)attachment / 3;
         double width = column switch

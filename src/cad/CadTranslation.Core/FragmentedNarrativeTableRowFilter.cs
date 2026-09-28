@@ -7,7 +7,7 @@ public static class FragmentedNarrativeTableRowFilter
         double medianTextHeight,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
         FragmentedNarrativeSample[] eligible = samples
             .Where(sample => sample.IsEligible)
             .ToArray();

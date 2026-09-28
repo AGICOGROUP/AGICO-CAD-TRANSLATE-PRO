@@ -1,6 +1,16 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+// IReadOnlySet is .NET 8+; AutoCAD 2020-2024 run on .NET Framework, where ISet is the read-compatible shape.
+// Aliases stay closed (one per element type): open-generic using aliases need a newer language version
+// than the SDK pinned in global.json, which breaks every rebuild of the shipped plugin.
+#if NET8_0_OR_GREATER
+using ReadOnlyStringSet = System.Collections.Generic.IReadOnlySet<string>;
+using ReadOnlyObjectIdSet = System.Collections.Generic.IReadOnlySet<Autodesk.AutoCAD.DatabaseServices.ObjectId>;
+#else
+using ReadOnlyStringSet = System.Collections.Generic.ISet<string>;
+using ReadOnlyObjectIdSet = System.Collections.Generic.ISet<Autodesk.AutoCAD.DatabaseServices.ObjectId>;
+#endif
 using Autodesk.AutoCAD.DatabaseServices;
 using CadTranslation.AutoCAD2025.Adapters;
 using CadTranslation.Contracts;
@@ -14,7 +24,7 @@ internal static class DrawingVerifier
     private const string SchemaVersion = "1.0";
     private static readonly ITextAdapter[] Adapters = [new DbTextAdapter(), new MTextAdapter(), new AttributeAdapter(), new DimensionAdapter()];
 
-    internal static void VerifyStructure(JobContext context, string reportName, IReadOnlySet<string>? verifiedAdditions = null)
+    internal static void VerifyStructure(JobContext context, string reportName, ReadOnlyStringSet? verifiedAdditions = null)
     {
         var source = CaptureSnapshot(context.Config.WorkingPath, "source", context.Config.ArtifactDirectory);
         var candidate = CaptureSnapshot(context.Config.OutputPath, "candidate", context.Config.ArtifactDirectory, verifiedAdditions);
@@ -67,6 +77,20 @@ internal static class DrawingVerifier
                 .Where(text => text.Actions.Contains("compress-width", StringComparer.Ordinal))
                 .Select(text => text.RecordId)
                 .ToHashSet(StringComparer.Ordinal);
+            // Exploded note-column rows are merged into one survivor line; the group
+            // is verified as the concatenation of its fragment translations in the
+            // source reading order (left to right), survivor first.
+            Dictionary<string, IReadOnlyList<string>> fragmentMergeGroups = layoutAudit.Texts
+                .Where(text => text.Actions.Contains("fragment-merge", StringComparer.Ordinal))
+                .GroupBy(text => text.NewHandle, StringComparer.OrdinalIgnoreCase)
+                .Select(group => layoutAudit.Texts
+                    .Where(text => string.Equals(text.NewHandle, group.Key, StringComparison.OrdinalIgnoreCase))
+                    .OrderBy(text => text.SourceBounds.Left)
+                    .ThenBy(text => text.RecordId, StringComparer.Ordinal)
+                    .Select(text => text.RecordId)
+                    .ToArray())
+                .Where(memberIds => memberIds.Length >= 2)
+                .ToDictionary(memberIds => memberIds[0], memberIds => (IReadOnlyList<string>)memberIds, StringComparer.Ordinal);
             CandidateTextRecord[] candidateRecords = ReadCandidateRecords(
                 context.Config.OutputPath,
                 context.Config.ArtifactDirectory,
@@ -78,7 +102,8 @@ internal static class DrawingVerifier
                 manifest,
                 translations,
                 candidateRecords,
-                identityOverrides);
+                identityOverrides,
+                fragmentMergeGroups);
             processed = candidateRecords.Length;
             errors.AddRange(content.Errors);
             if (errors.Count > 0)
@@ -112,11 +137,12 @@ internal static class DrawingVerifier
         IReadOnlyList<ManifestRecord> manifest,
         string sourceHash,
         IReadOnlyDictionary<string, CandidateIdentityOverride> identityOverrides,
-        IReadOnlySet<string> widthCompressed)
+        ReadOnlyStringSet widthCompressed)
     {
         using var database = new Database(false, true);
         ReadDrawing(database, candidatePath, artifactDirectory);
         using Transaction transaction = database.TransactionManager.StartTransaction();
+        database.DisableUndoRecording(true);
         var result = new List<CandidateTextRecord>(manifest.Count);
         foreach (ManifestRecord record in manifest)
         {
@@ -146,11 +172,12 @@ internal static class DrawingVerifier
         return result.ToArray();
     }
 
-    private static DrawingStructureSnapshot CaptureSnapshot(string path, string label, string artifactDirectory, IReadOnlySet<string>? verifiedAdditions = null)
+    private static DrawingStructureSnapshot CaptureSnapshot(string path, string label, string artifactDirectory, ReadOnlyStringSet? verifiedAdditions = null)
     {
         using var database = new Database(false, true);
         ReadDrawing(database, path, artifactDirectory);
         using Transaction transaction = database.TransactionManager.StartTransaction();
+        database.DisableUndoRecording(true);
         var tableRows = new List<string> { $"version|{database.OriginalFileVersion}" };
         var retainedBlocks = StructureBlocks(database, transaction);
         var nonTextRows = new List<string>();
@@ -240,7 +267,7 @@ internal static class DrawingVerifier
         return retained;
     }
 
-    private static void AddBlocks(ICollection<string> rows, Transaction transaction, ObjectId tableId, IReadOnlySet<ObjectId> retained)
+    private static void AddBlocks(ICollection<string> rows, Transaction transaction, ObjectId tableId, ReadOnlyObjectIdSet retained)
     {
         var table = (BlockTable)transaction.GetObject(tableId, OpenMode.ForRead);
         var entries = new List<string>();
@@ -274,7 +301,7 @@ internal static class DrawingVerifier
         foreach (string entry in entries.OrderBy(entry => entry, StringComparer.Ordinal)) rows.Add($"table|layouts|{entry}");
     }
 
-    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction, IReadOnlySet<string>? verifiedAdditions = null, IReadOnlySet<ObjectId>? retainedBlocks = null)
+    private static void AddEntityStructure(ICollection<string> rows, ICollection<TextStructureSignature> textEntities, Database database, Transaction transaction, ReadOnlyStringSet? verifiedAdditions = null, ReadOnlyObjectIdSet? retainedBlocks = null)
     {
         var retainedPaths = retainedBlocks?.Select(id => (BlockTableRecord)transaction.GetObject(id, OpenMode.ForRead))
             .Select(b => $"ROOT/BLOCK/{b.Name}/{b.Handle}").ToHashSet(StringComparer.Ordinal);
@@ -283,6 +310,13 @@ internal static class DrawingVerifier
             if (retainedPaths is not null && !retainedPaths.Contains(string.Join("/", item.OwnerPath.Split('/').Take(4)))) continue;
             if (item.Value is not Entity entity) continue;
             if (verifiedAdditions?.Contains(entity.Handle.ToString()) == true) continue;
+            // Zombie/proxy entities are orphaned custom objects from other CAD
+            // products; AutoCAD does not guarantee they survive a save, so they
+            // must not participate in the structural signature or every import of
+            // such a drawing reports candidate_structure_mismatch.
+            string rxClassName = entity.GetRXClass().Name;
+            if (rxClassName.Contains("Zombie", StringComparison.OrdinalIgnoreCase) ||
+                rxClassName.Contains("Proxy", StringComparison.OrdinalIgnoreCase)) continue;
             string stableOwnerPath = NonTextStructureSignaturePolicy.StableOwnerPath(item.OwnerPath);
             TextStructureSignature? textSignature = TextSignature(entity, stableOwnerPath);
             if (textSignature is not null)

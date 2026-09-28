@@ -56,7 +56,7 @@ public static class GridCellDetector
         double right = vertical.Where(s => s.Start.X >= text.Right - tolerance).Select(s => s.Start.X).DefaultIfEmpty(double.NaN).Min();
         double bottom = horizontal.Where(s => s.Start.Y <= text.Bottom + tolerance).Select(s => s.Start.Y).DefaultIfEmpty(double.NaN).Max();
         double top = horizontal.Where(s => s.Start.Y >= text.Top - tolerance).Select(s => s.Start.Y).DefaultIfEmpty(double.NaN).Min();
-        if (!double.IsFinite(left + right + bottom + top) || right <= left || top <= bottom) return null;
+        if (!IsFinite(left + right + bottom + top) || right <= left || top <= bottom) return null;
         if (!HasVerticalBoundary(vertical, left, bottom, top, tolerance) || !HasVerticalBoundary(vertical, right, bottom, top, tolerance) ||
             !HasHorizontalBoundary(horizontal, bottom, left, right, tolerance) || !HasHorizontalBoundary(horizontal, top, left, right, tolerance)) return null;
         if (segments.Any(s => s.IsVertical(tolerance) && s.Start.X > left + tolerance && s.Start.X < right - tolerance && s.MaxY > bottom + tolerance && s.MinY < top - tolerance ||

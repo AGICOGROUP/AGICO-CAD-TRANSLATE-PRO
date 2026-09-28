@@ -39,10 +39,15 @@ After inspecting the images, write the selected receipt under the job's `artifac
   "images": ["source-overview.png", "candidate-overview.png", "source-detail.png", "candidate-detail.png"],
   "notes": "Actual inspected regions and findings, including group and plot association when relevant.",
   "warnings": [],
+  "reviewedLayoutRecordIds": ["every recordId listed in replace-readability-review.json growthRecords that you actually inspected"],
   "blockingIssues": []
 }
 ```
 
 Replace example values with actual bindings and paths relative to `artifacts`, including both source and candidate evidence. `passed_with_warnings` needs nonempty warnings; `failed` needs concrete blocking issues. Use `layoutReviewRecordIds` and `segmentOverflowCount` to select relevant regions, not as automatic pass/fail thresholds. No separate per-record approval or layout receipt is required.
+
+## Checked growth records
+
+`replace-readability-review.json` reports two opposite risks. `records` lists labels shrunk below the original height. `growthRecords` lists labels whose final box grew past its source footprint (default threshold 1.5x on either axis) because a longer target was wrapped into several lines; their fit test can pass while the label covers a neighbouring table or frame, because text that lives inside a block reference is not part of the placed occupancy set. Render those records at readable scale, compare against the source and confirm the surroundings stay clean. Every `growthRecords` record id must appear in the receipt's `reviewedLayoutRecordIds`; `audit-summary` returns `replace_layout_growth_unreviewed` and withholds `deliveryReady` until it does. Acknowledging an id means you inspected it, not that it is acceptable: a label that covers other content is a blocking issue.
 
 Re-run `audit-summary`. Deliver only with `deliveryReady=true`; disclose returned warnings for `ready_with_warnings`. A failed candidate may be shared only as a labeled review draft. A changed candidate hash invalidates the old visual receipt; another mode's receipt cannot clear this mode's failures.

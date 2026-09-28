@@ -77,6 +77,6 @@ internal static class BilingualSavedLayoutReview
     {
         if (row.Geometry.Extents is not { } e) return null;
         var box = new Rect2(e.Minimum.X,e.Minimum.Y,e.Maximum.X,e.Maximum.Y);
-        return double.IsFinite(box.Area) && box.Width > 0 && box.Height > 0 ? box : null;
+        return IsFinite(box.Area) && box.Width > 0 && box.Height > 0 ? box : null;
     }
 }

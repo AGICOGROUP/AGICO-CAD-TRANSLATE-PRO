@@ -40,10 +40,11 @@ internal static class LocalCorrectionPipeline
             {
                 HostApplicationServices.WorkingDatabase = db;
                 using var tx = db.TransactionManager.StartTransaction();
+                db.DisableUndoRecording(true);
                 foreach (var edit in corrections.Edits)
                 {
                     if (!allowed.Contains(edit.Handle)) throw new CommandProtocolException("correction_target_forbidden", $"Not an editable translation target: {edit.Handle}");
-                    if (new[] { edit.Width, edit.Height, edit.X, edit.Y }.Where(v => v.HasValue).Any(v => !double.IsFinite(v!.Value)) ||
+                    if (new[] { edit.Width, edit.Height, edit.X, edit.Y }.Where(v => v.HasValue).Any(v => !IsFinite(v!.Value)) ||
                         edit.Width is <= 0 || edit.Height is <= 0 || (edit.X.HasValue != edit.Y.HasValue) ||
                         !(edit.Width.HasValue || edit.Height.HasValue || edit.X.HasValue))
                         throw new CommandProtocolException("invalid_correction_geometry", $"Require finite positive sizes and paired x/y: {edit.Handle}");

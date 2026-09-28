@@ -26,8 +26,16 @@ public static partial class NarrativeClassificationTextPolicy
             .Replace("}", string.Empty, StringComparison.Ordinal);
     }
 
-    [GeneratedRegex(@"\\[A-Za-z][^;]*;")]
+    private const string MTextControlPatternText = @"\\[A-Za-z][^;]*;";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(MTextControlPatternText)]
     private static partial Regex MTextControlPattern();
+#else
+    private static readonly Regex MTextControlPatternValue = new Regex(MTextControlPatternText, RegexOptions.Compiled);
+
+    private static Regex MTextControlPattern() => MTextControlPatternValue;
+#endif
 }
 
 public static class NarrativeOccupancyDetector

@@ -1,17 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <AutoCADRelease Condition="'$(AutoCADRelease)'==''">2025</AutoCADRelease>
+    <!-- .NET Framework hosts use the bare TFM; .NET 8+ hosts need the -windows suffix. -->
+    <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'=='' and ('$(CadHostFramework)'=='net47' or '$(CadHostFramework)'=='net48')">$(CadHostFramework)</AutoCADTargetFramework>
+    <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'=='' and '$(CadHostFramework)'!=''">$(CadHostFramework)-windows</AutoCADTargetFramework>
     <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'=='' and '$(AutoCADRelease)'=='2027'">net10.0-windows</AutoCADTargetFramework>
     <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'==''">net8.0-windows</AutoCADTargetFramework>
     <TargetFramework>$(AutoCADTargetFramework)</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
     <AutoCADDir Condition="'$(AutoCADDir)'=='' and '$(AutoCADRelease)'=='2025'">C:\Program Files\Autodesk\AutoCAD 2025</AutoCADDir>
     <AutoCADDir Condition="'$(AutoCADDir)'=='' and '$(AutoCADRelease)'=='2027'">C:\Program Files\Autodesk\AutoCAD 2027</AutoCADDir>
+    <!-- Prefer the installed host's own assemblies (identical to the historical 2025/2027 build);
+         otherwise compile against the official AutoCAD.NET reference packages for that release. -->
+    <UseLocalAutoCADAssemblies Condition="'$(AutoCADDir)'!='' and Exists('$(AutoCADDir)\accoremgd.dll')">true</UseLocalAutoCADAssemblies>
+    <UseLocalAutoCADAssemblies Condition="'$(UseLocalAutoCADAssemblies)'==''">false</UseLocalAutoCADAssemblies>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="NativeContactTests" />
     <ProjectReference Include="..\CadTranslation.Contracts\CadTranslation.Contracts.csproj" />
     <ProjectReference Include="..\CadTranslation.Core\CadTranslation.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalAutoCADAssemblies)'=='true'">
     <Reference Include="AcCoreMgd" HintPath="$(AutoCADDir)\accoremgd.dll">
       <Private>false</Private>
     </Reference>
@@ -22,11 +31,16 @@
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+  <ItemGroup Condition="'$(UseLocalAutoCADAssemblies)'=='false' and '$(AutoCADNetVersion)'!=''">
+    <PackageReference Include="AutoCAD.NET" Version="$(AutoCADNetVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="AutoCAD.NET.Core" Version="$(AutoCADNetVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="AutoCAD.NET.Model" Version="$(AutoCADNetVersion)" ExcludeAssets="runtime" />
+  </ItemGroup>
   <Target
     Name="RequireAutoCADManagedAssemblies"
     BeforeTargets="ResolveReferences"
-    Condition="!Exists('$(AutoCADDir)\accoremgd.dll')"
+    Condition="'$(UseLocalAutoCADAssemblies)'=='false' and '$(AutoCADNetVersion)'==''"
   >
-    <Error Text="AutoCAD $(AutoCADRelease) managed assemblies were not found at $(AutoCADDir)." />
+    <Error Text="AutoCAD $(AutoCADRelease) has no known managed assembly source: set AutoCADDir to an install root or AutoCADNetVersion to a release package." />
   </Target>
 </Project>

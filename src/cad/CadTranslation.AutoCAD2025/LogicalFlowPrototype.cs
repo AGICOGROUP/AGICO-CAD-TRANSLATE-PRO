@@ -38,6 +38,7 @@ internal static partial class LogicalFlowPrototype
                 HostApplicationServices.WorkingDatabase = database;
                 using (Transaction transaction = database.TransactionManager.StartTransaction())
                 {
+                    database.DisableUndoRecording(true);
                     DenseRegion[] denseRegions = BuildDenseRegions(auditRows, manifestById);
                     foreach (IGrouping<string, DenseRegion> definition in denseRegions.GroupBy(region => region.DefinitionName, StringComparer.Ordinal))
                     {
@@ -700,7 +701,12 @@ internal static partial class LogicalFlowPrototype
         replacement.Width = Math.Max(textHeight, width);
         replacement.TextHeight = textHeight;
         replacement.LineSpacingStyle = LineSpacingStyle.AtLeast;
-        replacement.LineSpacingFactor = 0.90;
+        // Single spacing (1.0). AutoCAD reads "at least 0.90" as a floor and still
+        // uses the font's natural spacing, so a smaller value changes nothing here -
+        // but viewers that simply multiply the factor by the text height draw the
+        // lines on top of each other and the paragraph looks overlapped. Keep the
+        // standard value so the composed paragraph reads the same everywhere.
+        replacement.LineSpacingFactor = 1.00;
         replacement.LayerId = source.LayerId;
         replacement.Color = source.Color;
         replacement.LineWeight = source.LineWeight;
@@ -923,7 +929,7 @@ internal static partial class LogicalFlowPrototype
             throw new InvalidOperationException("Cannot calculate a percentile for an empty sequence.");
         }
         int index = (int)Math.Round((ordered.Length - 1) * percentile);
-        return ordered[Math.Clamp(index, 0, ordered.Length - 1)];
+        return ordered[Clamp(index, 0, ordered.Length - 1)];
     }
 
     private static T ReadJson<T>(string path, string name)
@@ -993,8 +999,16 @@ internal static partial class LogicalFlowPrototype
         }
     }
 
-    [GeneratedRegex("^[\\u3400-\\u9fff]$", RegexOptions.CultureInvariant)]
+    private const string SingleCjkText = "^[\\u3400-\\u9fff]$";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(SingleCjkText, RegexOptions.CultureInvariant)]
     private static partial Regex SingleCjk();
+#else
+    private static readonly Regex SingleCjkValue = new Regex(SingleCjkText, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static Regex SingleCjk() => SingleCjkValue;
+#endif
 
     private sealed record DenseRegion(
         string DefinitionName,

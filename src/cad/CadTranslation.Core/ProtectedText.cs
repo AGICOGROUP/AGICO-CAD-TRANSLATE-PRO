@@ -14,7 +14,12 @@ public static partial class ProtectedText
     private const string UnitSymbol = @"(?:" + SiPrefix + SiUnit + @"|bar|psi|rpm|tpd|rad|sr|min|in|ft|[tdh]|°C|°F|[°%])(?:[²³]|\^[23])?";
     internal const string NumberPattern = @"[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:[\.,]\d+)?(?:\s*(?:" + UnitSymbol + @"(?:[·*/-]" + UnitSymbol + @")*(?![A-Za-z0-9])|" + ChineseUnit + @"))?";
     // No. is a drawing-number label, whereas A-20 and MDPX150 are model codes.
-    internal const string ModelPattern = @"(?<![A-Za-z0-9])(?!(?i:No)\.)[A-Za-z]+(?:[-_./]?[A-Za-z0-9]+)*\d+(?:[-_./]?[A-Za-z0-9]+)*";
+    // Linear-time form: the old `(?:[-_./]?[A-Za-z0-9]+)*\d+(?:...)*` had an
+    // optional separator inside starred groups, which backtracks exponentially on
+    // long hyphen chains (e.g. region-laboratory-child-laboratory-container-1) and
+    // stalled export for hours. Separators are now mandatory inside repetitions and
+    // the required digit is a single-pass lookahead; matched code tokens are the same.
+    internal const string ModelPattern = @"(?<![A-Za-z0-9])(?!(?i:No)\.)(?=[A-Za-z0-9._/-]*\d)[A-Za-z][A-Za-z0-9]*(?:[-_./][A-Za-z0-9]+)*";
     private static readonly Regex Placeholder = PlaceholderPattern();
     private static readonly Regex DiameterNumber = DiameterNumberPattern();
     private static readonly Regex NumberWithUnit = NumberWithUnitPattern();
@@ -22,7 +27,7 @@ public static partial class ProtectedText
 
     public static ParsedText Parse(string rawText)
     {
-        ArgumentNullException.ThrowIfNull(rawText);
+        ThrowIfNull(rawText);
         EnsureBalancedBraces(rawText);
 
         var plain = new StringBuilder(rawText.Length);
@@ -142,7 +147,7 @@ public static partial class ProtectedText
 
         match = ModelCode.Match(remaining);
         if (match.Success && match.Index == 0 &&
-            (index == 0 || !char.IsAsciiLetterOrDigit(value[index - 1])))
+            (index == 0 || !IsAsciiLetterOrDigit(value[index - 1])))
         {
             kind = "model-code";
             raw = match.Value;
@@ -166,10 +171,14 @@ public static partial class ProtectedText
         if (depth != 0) throw new FormatException("MTEXT braces are unbalanced.");
     }
 
-    [GeneratedRegex(@"^(?:\{[A-Za-z_][A-Za-z0-9_]*\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%s|%\d+)")]
+    private const string PlaceholderPatternText = @"^(?:\{[A-Za-z_][A-Za-z0-9_]*\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}|%s|%\d+)";
+    private const string DiameterNumberPatternText = @"^Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)";
+
+#if NET7_0_OR_GREATER
+    [GeneratedRegex(PlaceholderPatternText)]
     private static partial Regex PlaceholderPattern();
 
-    [GeneratedRegex(@"^Ø[+-]?(?:\d+[\.,]?\d*|[\.,]\d+)")]
+    [GeneratedRegex(DiameterNumberPatternText)]
     private static partial Regex DiameterNumberPattern();
 
     [GeneratedRegex("^" + NumberPattern)]
@@ -177,4 +186,16 @@ public static partial class ProtectedText
 
     [GeneratedRegex("^" + ModelPattern)]
     private static partial Regex ModelCodePattern();
+#else
+    // .NET Framework hosts (AutoCAD 2020-2024) have no GeneratedRegex source generator.
+    private static readonly Regex PlaceholderPatternValue = new Regex(PlaceholderPatternText, RegexOptions.Compiled);
+    private static readonly Regex DiameterNumberPatternValue = new Regex(DiameterNumberPatternText, RegexOptions.Compiled);
+    private static readonly Regex NumberWithUnitPatternValue = new Regex("^" + NumberPattern, RegexOptions.Compiled);
+    private static readonly Regex ModelCodePatternValue = new Regex("^" + ModelPattern, RegexOptions.Compiled);
+
+    private static Regex PlaceholderPattern() => PlaceholderPatternValue;
+    private static Regex DiameterNumberPattern() => DiameterNumberPatternValue;
+    private static Regex NumberWithUnitPattern() => NumberWithUnitPatternValue;
+    private static Regex ModelCodePattern() => ModelCodePatternValue;
+#endif
 }

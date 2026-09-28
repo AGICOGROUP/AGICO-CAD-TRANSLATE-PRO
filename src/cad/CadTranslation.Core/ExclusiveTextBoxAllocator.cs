@@ -12,7 +12,7 @@ public static class ExclusiveTextBoxAllocator
         IReadOnlyList<LayoutTextBoxSample> samples,
         double tolerance = 1e-6)
     {
-        ArgumentNullException.ThrowIfNull(samples);
+        ThrowIfNull(samples);
         var result = new Dictionary<string, Rect2>(StringComparer.Ordinal);
         foreach (LayoutTextBoxSample sample in samples)
         {

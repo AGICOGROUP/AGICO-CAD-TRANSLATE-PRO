@@ -53,6 +53,7 @@ internal static class ReplaceDrawingImporter
             stage = "capture-and-write";
             using (Transaction transaction = workingDatabase.TransactionManager.StartTransaction())
             {
+                workingDatabase.DisableUndoRecording(true);
                 var suppressed = new HashSet<string>(StringComparer.Ordinal);
                 changed = resolved.Where(write => ImportWriteDecision.NeedsWrite(write.CurrentRawText, write.RestoredText)).ToArray();
                 LayoutWriteInput[] layoutInputs = resolved
@@ -72,7 +73,10 @@ internal static class ReplaceDrawingImporter
                 stage = "write-translations";
                 foreach (ResolvedWrite write in changed.Where(write => !suppressed.Contains(write.Manifest.RecordId)))
                 {
-                    DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false);
+                    // forceOpenOnLockedLayer: writing through a locked layer must not
+                    // require an unlock/restore dance (and UpgradeOpen alone can raise
+                    // eOnLockedLayer).
+                    DBObject value = transaction.GetObject(write.ObjectId, OpenMode.ForWrite, false, true);
                     write.Adapter.Write(value, write.Manifest.Slot, write.RestoredText);
                 }
                 stage = "optimize-layout";
@@ -103,9 +107,14 @@ internal static class ReplaceDrawingImporter
                     SaveTemporaryOutput(workingDatabase, correctedOutput, Path.GetExtension(context.Config.WorkingPath));
                     File.Copy(correctedOutput, auditOutput, overwrite: true);
                     var correctedAudit = AuditTemporaryOutput(auditOutput, Path.GetExtension(context.Config.WorkingPath), layoutBaseline, correctedLayout, 2);
-                    var originalRisks = layoutAudit.ManualReview.Select(r => (r.RecordId, r.OtherRecordId, r.Code, r.InstancePath, r.Detail)).ToHashSet();
+                    // Identity = which record pair broke and where. Detail strings carry
+                    // position-derived flags (changed-left/right) that legitimately flip
+                    // when a move succeeds, so they must not define a "new" risk.
+                    AtomicFile.WriteUtf8(Path.Combine(context.Config.ArtifactDirectory, $"{artifactPrefix}-layout-audit-pass2.json"),
+                        JsonSerializer.Serialize(correctedAudit, JsonDefaults.Options));
+                    var originalRisks = layoutAudit.ManualReview.Select(r => (r.RecordId, r.OtherRecordId, r.Code, r.InstancePath)).ToHashSet();
                     accepted = correctedAudit.ManualReview.Count < layoutAudit.ManualReview.Count &&
-                        correctedAudit.ManualReview.All(r => originalRisks.Contains((r.RecordId, r.OtherRecordId, r.Code, r.InstancePath, r.Detail)));
+                        correctedAudit.ManualReview.All(r => originalRisks.Contains((r.RecordId, r.OtherRecordId, r.Code, r.InstancePath)));
                     if (accepted)
                     {
                         File.Copy(correctedOutput, temporaryOutput, overwrite: true);
@@ -187,6 +196,7 @@ internal static class ReplaceDrawingImporter
     {
         var resolved = new List<ResolvedWrite>(manifest.Count);
         using Transaction transaction = database.TransactionManager.StartTransaction();
+        database.DisableUndoRecording(true);
         foreach (ManifestRecord record in manifest)
         {
             ObjectId objectId = ResolveObjectId(database, record);

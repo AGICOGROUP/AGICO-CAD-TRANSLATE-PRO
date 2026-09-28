@@ -267,6 +267,7 @@ internal static class BilingualDrawingImporter
                     added.Rotation = row.Geometry.RotationRadians;
                     string contents = Escape(targetText);
                     if (context.Config.TargetLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase)) contents = @"\FSimSun;" + contents;
+                    else contents = SourceLatinFontPrefix(row.RawText) + contents;
                     bool inTable = tableSlots.TryGetValue(row.RecordId, out var slot);
                     Rect2 bounds = default;
                     double scale = 0;
@@ -274,8 +275,14 @@ internal static class BilingualDrawingImporter
                     if (inTable)
                     {
                         added.Rotation = 0;
-                        added.TextStyleId = db.Textstyle;
+                        // Reuse the source's text style mapped above. Overwriting it with
+                        // db.Textstyle drew english cell text in the drawing default face,
+                        // which is wider than the source face and reads as loose spacing.
                         added.Contents = BilingualGroupLayout.Contents(slot.DisplayText, context.Config.TargetLanguage);
+                        if (!context.Config.TargetLanguage.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+                        {
+                            added.Contents = SourceLatinFontPrefix(row.RawText) + added.Contents;
+                        }
                         added.TextHeight = slot.Height;
                         added.Width = slot.WrapWidth;
                         var footprint = BilingualPlacementChecks.Footprint(added);
@@ -455,6 +462,14 @@ internal static class BilingualDrawingImporter
     // sits at W0.7 must not gain English at W1, which reads ~43% looser and pushes
     // labels into their neighbours. The ladder may only condense below the source
     // factor to fit, never widen past it.
+    // Added latin text reuses the source's own face when that face can render latin text;
+    // otherwise it falls back to the conventional face so the addition always renders.
+    private static string SourceLatinFontPrefix(string rawText)
+    {
+        var match = Regex.Match(rawText ?? string.Empty, @"\\[Ff]([^;]*);");
+        return NarrativeTargetFontPolicy.ResolvePrefix(match.Success ? match.Groups[1].Value : null);
+    }
+
     private static double SourceWidthFactor(CadLayoutText source)
     {
         double factor = source.Source.WidthFactor;
@@ -490,8 +505,17 @@ internal static class BilingualDrawingImporter
                 occupied, z, out result, out usedScale, trace);
         }
         // Keep labels local, but a frame/cell edge is not a hard boundary.
-        Rect2 allowed = new Rect2(box.Left - height * 16, box.Bottom - height * 16,
-            box.Right + height * 16, box.Top + height * 16);
+        // Text inside a block definition (title blocks, panels) shares its space with neighbouring
+        // cells and frame lines, so a distant pocket there is not free space: the 16-height allowance
+        // let translations cross the frame and overlap their neighbours (seen on a CAXA title block
+        // where 20 additions produced 80 box collisions). Model space keeps the wide allowance
+        // because inline space beside the source text is genuinely free there. When a block-owned
+        // text cannot be held near its source, Place fails and the record is reported unresolved
+        // rather than drawn over the panel.
+        bool blockOwned = !(source.DefinitionName ?? string.Empty).StartsWith("*", StringComparison.Ordinal);
+        double allowance = titleField || blockOwned ? height * 2 : height * 16;
+        Rect2 allowed = new Rect2(box.Left - allowance, box.Bottom - allowance,
+            box.Right + allowance, box.Top + allowance);
         if (trace is not null) { trace.Allowed = allowed; trace.RegionId = container?.Id; }
         // Every candidate must be inside allowed. Distant text cannot collide;
         // filter once instead of scanning every block's text for every trial.
@@ -704,8 +728,8 @@ internal static class BilingualDrawingImporter
             double left=Math.Max(allowed.Left,box.Left-reach-fp.Width), right=Math.Min(allowed.Right-fp.Width,box.Right+reach);
             double bottom=Math.Max(allowed.Bottom,box.Bottom-reach-fp.Height), top=Math.Min(allowed.Top-fp.Height,box.Top+reach);
             if(right<left || top<bottom) continue;
-            int columns=Math.Clamp((int)Math.Ceiling((right-left)/(height*.5)),1,32);
-            int rows=Math.Clamp((int)Math.Ceiling((top-bottom)/(height*.5)),1,32);
+            int columns=Clamp((int)Math.Ceiling((right-left)/(height*.5)),1,32);
+            int rows=Clamp((int)Math.Ceiling((top-bottom)/(height*.5)),1,32);
             // At most 1089 positions per measured layout, only after edge-based
             // nearby placement failed. Prune known collisions before native measurement.
             var candidates=Enumerable.Range(0,columns+1).SelectMany(x=>Enumerable.Range(0,rows+1).Select(y=>

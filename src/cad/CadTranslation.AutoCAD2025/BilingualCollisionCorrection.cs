@@ -228,7 +228,7 @@ internal static class BilingualCollisionCorrection
     {
         if (row?.Geometry.Extents is not { } extents) return null;
         var box = new Rect2(extents.Minimum.X, extents.Minimum.Y, extents.Maximum.X, extents.Maximum.Y);
-        return double.IsFinite(box.Area) && box.Width > 1e-9 && box.Height > 1e-9 ? box : null;
+        return IsFinite(box.Area) && box.Width > 1e-9 && box.Height > 1e-9 ? box : null;
     }
 
     private static IEnumerable<(double Scale, double Wrap)> Attempts()
@@ -272,7 +272,7 @@ internal static class BilingualCollisionCorrection
             : CadLayoutGeometry.TryBounds(entity);
         if (bounds is not { } b) return null;
         var box = new Rect2(b.MinX, b.MinY, b.MaxX, b.MaxY);
-        return double.IsFinite(box.Area) && box.Width > 1e-9 && box.Height > 1e-9 ? box : null;
+        return IsFinite(box.Area) && box.Width > 1e-9 && box.Height > 1e-9 ? box : null;
     }
 
     private static bool Collides(Rect2 candidate, IReadOnlyList<Rect2> occupied)

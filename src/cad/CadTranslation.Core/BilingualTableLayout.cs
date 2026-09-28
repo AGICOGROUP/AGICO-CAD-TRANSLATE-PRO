@@ -95,11 +95,11 @@ public static class BilingualTableLayout
         {
             double axis=horizontal?group.First().Start.Y:group.First().Start.X;
             double start=double.NaN,end=double.NaN;
-            void Add(){if(double.IsFinite(start))merged.Add(horizontal?new(new(start,axis),new(end,axis)):new(new(axis,start),new(axis,end)));}
+            void Add(){if(IsFinite(start))merged.Add(horizontal?new(new(start,axis),new(end,axis)):new(new(axis,start),new(axis,end)));}
             foreach(var line in group.OrderBy(s=>horizontal?s.MinX:s.MinY))
             {
                 double lo=horizontal?line.MinX:line.MinY,hi=horizontal?line.MaxX:line.MaxY;
-                if(!double.IsFinite(start)){start=lo;end=hi;}
+                if(!IsFinite(start)){start=lo;end=hi;}
                 else if(lo<=end+tolerance)end=Math.Max(end,hi);
                 else {Add();start=lo;end=hi;}
             }
