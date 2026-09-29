@@ -71,6 +71,13 @@ def overlap(a, b):
     return len(a) == len(b) == 4 and min(a[2],b[2])-max(a[0],b[0]) > 1e-5 and min(a[3],b[3])-max(a[1],b[1]) > 1e-5
 
 
+def same_native_font(a,b):
+    if a.get('font')==b.get('font'):
+        return True
+    fields=('fontFace','fontBold','fontItalic')
+    return bool(a.get('fontFace')) and all(a.get(f)==b.get(f) and f in a and f in b for f in fields) and all(not r.get('font') or Path(r['font']).suffix.lower() in ('.ttf','.ttc') for r in (a,b))
+
+
 def check_projection(snapshot):
     require(snapshot.get('worldBoxCoverage')=='complete', 'Complete instance projection required')
     blocks={b['name']:b for b in snapshot.get('blocks',[])}
@@ -78,6 +85,10 @@ def check_projection(snapshot):
         views=row.get('worldBoxes')
         require(isinstance(views,list), 'Missing text instance projection')
         if not views:
+            if not row.get('raw','').strip() or row.get('visible') is False:
+                continue
+            if row.get('kind')=='ATTDEF' and row.get('instanceDisplay')=='attribute-definition-suppressed':
+                continue
             block=blocks.get(row['block'],{})
             require(block.get('layout') is False and block.get('visibleInstanceCount')==0 and row['block'] not in ('*Model_Space','*Paper_Space'), 'Visible text has empty instance projection')
         for view in views:
@@ -156,6 +167,13 @@ def validate_mapping(source, mapping):
             if mapping['sourceLanguage'].lower().startswith('zh') and re.search('[\u3400-\u9fff]', row.get('visibleText',row['raw'])):
                 require(required or edit.get('retainReason') == 'engineering-token' and edit.get('retainExplanation'), 'Untranslated source needs counterpart')
             if required and k not in added_sources:
+                if edit.get('retainReason')=='existing-bilingual-geometry':
+                    geometry={g['handle']:g for g in source.get('geometry',[])}
+                    refs=edit.get('counterpartGeometryKeys',[])
+                    require(refs and edit.get('counterpartComplete') is True and edit.get('counterpartMeaning','').strip(), 'Missing outline counterpart evidence')
+                    require(all(ref in geometry and geometry[ref]['block']==row['block'] for ref in refs), 'Invalid outline counterpart geometry')
+                    require(edit.get('visualCounterpartReviewed') is True and edit.get('inlineTarget','').strip(), 'Outline counterpart requires semantic and visual review')
+                    continue
                 if edit.get('retainReason')=='existing-bilingual-inline':
                     visible=row.get('visibleText',row['raw'])
                     a,b=edit.get('inlineSource',''),edit.get('inlineTarget','')
@@ -199,7 +217,7 @@ def verify_content(source, mapping, saved, receipt):
                 if src[k]['kind'] in ('TEXT','ATTRIB','ATTDEF'):fields+=['alignmentPoint','widthFactor']
                 for field in fields:
                     require(field in src[k] and field in dst[k] and src[k][field] is not None and dst[k][field] is not None, 'Missing original appearance evidence: '+field)
-                    require(src[k].get(field)==dst[k].get(field), 'Saved original appearance changed: '+field)
+                    require(same_native_font(src[k],dst[k]) if field=='font' else src[k].get(field)==dst[k].get(field), 'Saved original appearance changed: '+field)
         elif edit['action']=='replace':
             require(k in dst and dst[k]['raw']==edit['target'], 'Saved target content mismatch')
         elif edit['action']=='reflow-member':
@@ -209,7 +227,8 @@ def verify_content(source, mapping, saved, receipt):
         check_projection(saved)
         styles={s['name']:s for s in saved.get('styles',[])}
         for style in source.get('styles',[]):
-            require(styles.get(style['name'])==style, 'Original shared style changed')
+            other=styles.get(style['name'],{})
+            require(same_native_font(style,other) and {k:v for k,v in style.items() if k!='font'}=={k:v for k,v in other.items() if k!='font'}, 'Original shared style changed')
     geo=lambda snapshot:{g['handle']:g for g in snapshot['geometry']}
     require(geo(source)==geo(saved), 'Saved engineering geometry changed')
     require(source.get('instances',[])==saved.get('instances',[]), 'Block instance transforms changed')
@@ -228,6 +247,8 @@ def verify_content(source, mapping, saved, receipt):
         box=row.get('box',[])
         require(len(box)==4 and in_region(box,addition['placement']['region']), 'Saved addition outside region')
         for other in dst.values():
+            if not other.get('raw','').strip() or other.get('visible') is False or other.get('instanceDisplay')=='attribute-definition-suppressed':
+                continue
             if key(other)!=k and other['block']==row['block']:
                 require(not overlap(box,other.get('box',[])), 'Saved bilingual text overlap: '+aid+' / '+other['handle'])
             if key(other)!=k:
