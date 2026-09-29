@@ -1,7 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'=='' and '$(CadHostFramework)'!=''">$(CadHostFramework)</AutoCADTargetFramework>
-    <AutoCADTargetFramework Condition="'$(AutoCADTargetFramework)'==''">net8.0</AutoCADTargetFramework>
-    <TargetFramework>$(AutoCADTargetFramework)</TargetFramework>
-  </PropertyGroup>
-</Project>

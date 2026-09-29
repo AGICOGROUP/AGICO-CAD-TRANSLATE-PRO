@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="NativeFixture.cs" />
+    <Reference Include="AcDbMgd"><HintPath>$(AutoCADRoot)/acdbmgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcMgd"><HintPath>$(AutoCADRoot)/acmgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcCoreMgd"><HintPath>$(AutoCADRoot)/accoremgd.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

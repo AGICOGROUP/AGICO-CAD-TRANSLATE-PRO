@@ -4,3 +4,9 @@ __pycache__/
 bin/
 obj/
 tmp/
+.pytest_cache/
+work/
+jobs/
+outputs/
+runs/
+tools/

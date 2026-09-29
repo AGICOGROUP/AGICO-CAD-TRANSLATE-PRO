@@ -1,9 +1,0 @@
-{
-  "acceptedFor": "R25.0",
-  "pluginDllSha256": "3057947e86903dc9759c3c99eb71d50afe4222f6031322ea08635d67aaff55ec",
-  "coreDllSha256": "d41bfa165d1cd042833eb6649640cc6f956a571f32e058d52bc9aa274f87c955",
-  "cycle": "fresh synthetic DWG -> export -> assemble -> import -> saved-output checks -> native PNG review -> audit-summary deliveryReady=true",
-  "date": "2026-09-28",
-  "job": "tmp/native-skill-adoption-20260928/bilingual",
-  "note": "Targeted regression for complete source entity property inheritance. 12 additions, 1 existing pair reused, 0 layout risks. Synthetic fixture acceptance; no claim of production drawing quality/performance validation."
-}

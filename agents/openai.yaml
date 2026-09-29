@@ -1,4 +1,6 @@
 interface:
   display_name: "CAD-TRANSLATE-PRO"
-  short_description: "Chinese-English CAD replacement or additive bilingual translation"
-  default_prompt: "Use $CAD-TRANSLATE-PRO with the requested language and mode. DWG replacement uses formats/dwg/replace/SKILL.md and its native data contract; bilingual uses references/bilingual-workflow.md plus native-bilingual-practices.md. Reconstruct complete semantics, protect engineering symbols, verify a fresh copy of the saved candidate and deliver the final DWG."
+  short_description: "Native DWG replacement and source-preserving bilingual translation"
+  default_prompt: "Use $cad-translate-pro to translate the DWG in the requested language and mode, following the native contract and verifying the saved drawing before DWG-only delivery."
+policy:
+  allow_implicit_invocation: true
