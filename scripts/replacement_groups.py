@@ -12,7 +12,10 @@ from pathlib import Path
 
 
 NEW_ITEM = re.compile(r"^\s*(?:[（(]?\d+[.)、．）]?|[一二三四五六七八九十]+[、.．])\s*")
+NUMBERED_ITEM = re.compile(r"^\s*(?:[（(]\d+[)）]|[1-9]\d*[.)、．）]|[一二三四五六七八九十]+[、.．])(?!\d)\s*")
 TERMINAL = re.compile(r"[。．.;；!！?？:：]\s*$")
+SUBHEADING = re.compile(r"[:：]\s*$")
+CONTINUATION_START = re.compile(r"^(?:并|且|以及|同时|应|按|在|与|对|其|使|以|若|当|或|不应|不得|需)")
 
 
 def _box(row):
@@ -92,7 +95,8 @@ def _can_join_inline(left, right, barriers):
             and -0.35 * max(ha, hb) <= gap <= 1.6 * max(ha, hb))
 
 
-def _can_join_paragraph(top, lower):
+def _can_join_paragraph(parent, lower):
+    top = parent['last']
     if top['region'] != lower['region']:
         return False
     a, b = top['box'], lower['box']
@@ -100,12 +104,23 @@ def _can_join_paragraph(top, lower):
     overlap = min(a[2], b[2]) - max(a[0], b[0])
     narrow = min(a[2] - a[0], b[2] - b[0])
     dy = a[1] - b[1]
-    return (0.75 * h <= dy <= 1.7 * h
+    if not (0.75 * h <= dy <= 2.0 * h
             and overlap > 0.5 * narrow
             and abs(a[0] - b[0]) <= 3 * h
             and len(top['source'].strip()) >= 6
             and not TERMINAL.search(top['source'])
-            and not NEW_ITEM.match(lower['source']))
+            and not NEW_ITEM.match(lower['source'])):
+        return False
+    if dy <= 1.7 * h:
+        return True
+    stripped = lower['source'].strip()
+    if SUBHEADING.search(stripped) or (len(stripped) <= 8
+                                      and not re.search(r"[，。；、,.!?！？]", stripped)
+                                      and not CONTINUATION_START.match(stripped)):
+        return False
+    first = parent['first']
+    indent = b[0] - first['box'][0]
+    return bool(NUMBERED_ITEM.match(first['source']) and 0.5 * h <= indent <= 3 * h)
 
 
 def build_units(rows, geometry=()):
@@ -150,7 +165,7 @@ def build_units(rows, geometry=()):
         # columns, table cells, or numbered notes.
         paragraphs = []
         for line in sorted(lines, key=lambda x: (-x['box'][1], x['box'][0])):
-            matches = [unit for unit in paragraphs if _can_join_paragraph(unit['last'], line)]
+            matches = [unit for unit in paragraphs if _can_join_paragraph(unit, line)]
             if matches:
                 parent = min(matches, key=lambda x: abs(x['last']['box'][0] - line['box'][0]))
                 parent['members'].extend(line['members'])
@@ -162,8 +177,9 @@ def build_units(rows, geometry=()):
                 parent['last'] = line
                 parent['nlines'] += 1
             else:
-                paragraphs.append({**line, 'last': line, 'nlines': 1})
+                paragraphs.append({**line, 'first': line, 'last': line, 'nlines': 1})
         for unit in paragraphs:
+            unit.pop('first')
             unit.pop('last')
         result.extend(paragraphs)
         result.extend({**_new_unit([row]), 'nlines': 1} for row in atomic if _box(row) is not None)

@@ -92,6 +92,36 @@ def test_numbered_item_starts_new_unit():
     assert handles(api().build_units(rows)) == [('A',), ('B',)]
 
 
+def test_indented_numbered_item_continuation_survives_wider_line_spacing():
+    rows = [row('A', '1. 基础混凝土施工要求', [0, 100, 100, 110]),
+            row('B', '应按设计标高浇筑', [10, 82.6, 100, 92.6]),
+            row('C', '并按规定养护。', [10, 64.7, 100, 74.7]),
+            row('D', '2. 钢筋施工要求', [0, 47.3, 100, 57.3])]
+    units = api().build_units(rows)
+    assert handles(units) == [('A', 'B', 'C'), ('D',)]
+    assert units[0]['source'] == '1. 基础混凝土施工要求\n应按设计标高浇筑\n并按规定养护。'
+
+
+def test_wide_gap_without_numbered_indent_does_not_join():
+    rows = [row('A', '基础混凝土施工要求', [0, 100, 100, 110]),
+            row('B', '应按设计标高浇筑', [10, 82.1, 100, 92.1]),
+            row('C', '1. 基础混凝土施工要求', [200, 100, 300, 110]),
+            row('D', '施工说明：', [210, 82.1, 300, 92.1])]
+    assert handles(api().build_units(rows)) == [('A',), ('C',), ('B',), ('D',)]
+
+
+def test_subheading_after_numbered_item_is_not_a_continuation():
+    rows = [row('A', '1. 基础混凝土施工要求', [0, 100, 100, 110]),
+            row('B', '施工说明：', [10, 82.1, 100, 92.1])]
+    assert handles(api().build_units(rows)) == [('A',), ('B',)]
+
+
+def test_short_unmarked_heading_after_numbered_item_is_not_a_continuation():
+    rows = [row('A', '2) 结构混凝土耐久性的基本要求', [0, 100, 100, 110]),
+            row('B', '环境类别', [10, 82.1, 100, 92.1])]
+    assert handles(api().build_units(rows)) == [('A',), ('B',)]
+
+
 def test_every_visible_source_record_has_one_group_owner():
     rows = [row('A', '基础', [0, 0, 20, 10]),
             row('B', 'C30', [21, 0, 41, 10]),
