@@ -31,7 +31,7 @@ def render(drawing,output,engine,window=None,job=None,timeout=60,layout='Model')
     for path in (copy,output):
         if any(c in str(path) for c in '\n\r"'):raise ValueError('Unsafe CAD script path')
     zoom='_E\n' if window is None else '_W\n'+f'{window[0]},{window[1]}\n{window[2]},{window[3]}\n'
-    space='_.TILEMODE\n1\n' if layout=='Model' else '_.TILEMODE\n0\n_.CTAB\n'+layout+'\n_.PSPACE\n'
+    space='_.TILEMODE\n1\n' if layout=='Model' else '_.TILEMODE\n0\n_.CTAB\n"'+layout+'"\n_.PSPACE\n'
     view='_.UCS\n_W\n_.PLAN\n_W\n' if layout=='Model' else ''
     # Core Console scripts use the Windows ANSI code page for localized values.
     encoding='cp'+str(ctypes.windll.kernel32.GetACP()) if hasattr(ctypes,'windll') else 'utf-8'
@@ -40,7 +40,10 @@ def render(drawing,output,engine,window=None,job=None,timeout=60,layout='Model')
         process=subprocess.Popen([str(engine),'/i',str(copy),'/s',str(script)],stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         deadline=time.monotonic()+timeout
         while time.monotonic()<deadline and process.poll() is None:
-            if output.is_file() and output.stat().st_size>512:break
+            try:
+                if output.stat().st_size>512:break
+            except FileNotFoundError:
+                pass
             time.sleep(.2)
         if process.poll() is None:
             subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=log,stderr=log,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
