@@ -10,6 +10,8 @@ python scripts/native_job.py prepare --source "输入.dwg" --job "work/cad/新�
 
 双语 mode 使用 bilingual。任务目录已存在会拒绝创建，测试必须重新复制源文件。记录 sourcePath/sourceSha256/mode/direction 后不改任务绑定。CAD 永远只打开 job/input.dwg 或新的候选核验副本。
 
+单语分组需要原生 `rows[].block`、`blocks[].handle/name` 与 `geometry[].type/block/shape`。直线使用 a/b，多段线使用 vertices 中的 point（或 p）、bulge 和 closed；块引用使用 type=AcDbBlockReference、shape.definition=子块 handle，以及 shape.matrix=原生 Matrix3d.ToArray 的 16 项逐行矩阵。缺少真实引用矩阵时先补齐提取，不能用插入点猜测复杂变换。
+
 原生提取输出 extracted.json，采用 data-contracts.md。模型完成语义重建、术语检索和翻译后写 mapping.json；单语 edits/reflows，双语 edits/additions。完整源记录都有动作，原文必须匹配。
 
 ```powershell
@@ -25,13 +27,18 @@ python scripts/native_job.py validate --job "work/cad/新任务"
 - mapping 顶层必需 `mode`（replace/bilingual）、`sourceLanguage`、`targetLanguage` 与 `scope.sheetIds`。sheetIds 是本次原生提取、图框审查确认的实际图纸清单，视觉审查必须逐项覆盖同一清单。
 - retain 必须写 retainReason；双语保留的 rows 必须实际提取 block/layer/color/style/font/bigFont/position/height/width/rotation；TEXT/ATTRIB/ATTDEF 另需 alignmentPoint、widthFactor。不得用缺失字段或双方 null 证明源外观未变。width 在 TEXT 中仍保留原包含义，widthFactor 单独记录。
 - 双语 source/saved 顶层 `worldBoxCoverage: "complete"`。每条 row 的 `worldBoxes` 是从所有实际可见实例逐层组合完整变换后，原生包围盒所有角点投影得到的列表，每项 `{root: 实际模型或纸空间布局名, instancePath: [从根到该实体的引用handle], box: [minX,minY,maxX,maxY]}`。未引用块允许为空列表，但 blocks 中必须由真实引用图记录 layout=false、visibleInstanceCount=0；模型/纸空间行和所有可见块行不得为空，不能将可见块伪报为空。不同块的文字只要出现在同一 root，均做相交检查；纸空间视口按实际显示投影补齐。未知变换必须记 coverageIssues 并阻塞。
-- reflows 每组必需 group、sourceHandles、block、properties、target、layoutPlan、protectedValues、verificationIssues；edit 的 action=reflow-member 同时指定 reflowGroup，sourceHandles 必须唯一确定一条文字记录。复杂 Table 多slot使用原生专用重排适配，不能靠不明确的handle归属。
+- reflows 每组必需 group、sourceHandles、block、properties、target、layoutPlan、minReadableHeight、protectedValues、verificationIssues；edit 的 action=reflow-member 同时指定 reflowGroup，sourceHandles 必须唯一确定一条文字记录。复杂 Table 多slot使用原生专用重排适配，不能靠不明确的handle归属。
+- `protectedValues` 使用原样保留的字符串，如 `["C30", "GB50057-2010"]`，或明确表示转换的对象，如 `[{"source":"50毫米","target":"50mm"},{"source":"热镀锌","target":"hot-dip galvanized"}]`。凡含工程值或材质/处理、否定、适用条件等关键限定，均须声明对应约束，尤其是准备短化/拟合的译文。校验器检查源文与目标，拒绝空声明、缺失值及 `C30`→`C300`；MText 格式参数不计作工程值。同一行相邻碎片按原生边界与细字形基线拼接，跨栏隔离。短化后重跑约束；只检查已声明值，仍须语义复核，不能把空清单当成全部事实已受保护。双语对新增目标检查。
 
 最小重排结构（值由当前原生提取与实际区域决定）：
 
 ```json
-{"edits":[{"handle":"A1","kind":"TEXT","slot":"text","expectedRaw":"基础","action":"reflow-member","reflowGroup":"note-1","target":"","layoutPlan":{},"protectedValues":[],"verificationIssues":[]}],"reflows":[{"group":"note-1","sourceHandles":["A1"],"block":"*Model_Space","properties":"A1","target":"Foundation","layoutPlan":{"position":[0,0,0],"width":12,"height":2,"region":[0,-5,12,0]},"protectedValues":[],"verificationIssues":[]}]}
+{"edits":[{"handle":"A1","kind":"TEXT","slot":"text","expectedRaw":"基础","action":"reflow-member","reflowGroup":"note-1","target":"","layoutPlan":{},"protectedValues":[],"verificationIssues":[]}],"reflows":[{"group":"note-1","sourceHandles":["A1"],"block":"*Model_Space","properties":"A1","target":"Foundation","layoutPlan":{"position":[0,0,0],"width":12,"height":2,"region":[0,-5,12,0],"checkTextOverlap":true},"minReadableHeight":1.4,"protectedValues":[],"verificationIssues":[]}]}
 ```
+
+保存后检查重排原生边界位于 `layoutPlan.region`、字号不低于 `minReadableHeight`。长横向多行说明（至少40个非空白可见字符）另按源实体实际横向范围限宽：`layoutPlan.width` 及保存后可见 ink 不得越出原列；可在真实可用竖向空间换行，不能由译文宽度倒推放宽允许区域。局部原生圆圈内的短ASCII工程编号须独立锚定：保留原标识，或用仅含该标识的独立重排组，保存后仍完整位于原圆圈内；不得并入说明段落。
+
+表格及已保留的注释区域设置 `layoutPlan.checkTextOverlap: true`；同格多项保留相对位置或合为多行，不能逐项都居中到整格。MText 的 box 可能含列宽空白，可提供原生实测 `inkBox` 供碰撞检查；不能用字符数推算或缩小边界。缺少 inkBox 时保守使用 box。跨块、未识别标记及图形遮挡继续逐图检查，局部检查不代替原生视图。
 
 重排收据以 group 绑定实际新 handle；保存后来源已移除，新目标内容/所属块/清单覆盖闭合。写回状态 schemaVersion=1，errors=[]，candidateSha256 必须等于已关闭候选的实际哈希。保存后快照 engine.inputPath 必须就是 saved/input.dwg，不能用任意路径宣称重新打开。
 
